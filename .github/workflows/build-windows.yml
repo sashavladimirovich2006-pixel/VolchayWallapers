@@ -31,18 +31,22 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: ${{ env.QT_VERSION }}
-          host: windows
-          target: desktop
-          arch: win64_msvc2022_64
-          modules: 'qtsvg'
-          aqtversion: '==3.1.*'
-          py7zrversion: '==0.21.*'
-          cache: false
-          setup-python: false
+      - name: Install Qt via aqtinstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install --upgrade pip
+          python -m pip install "aqtinstall==3.1.*" "py7zr"
+          $qtDir = "${{ github.workspace }}\Qt"
+          New-Item -ItemType Directory -Force -Path $qtDir | Out-Null
+          python -m aqt install-qt windows desktop ${{ env.QT_VERSION }} win64_msvc2022_64 `
+              -m qtsvg `
+              -O $qtDir
+          $qt6Dir = "$qtDir\${{ env.QT_VERSION }}\msvc2022_64"
+          echo "Qt6_DIR=$qt6Dir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CMAKE_PREFIX_PATH=$qt6Dir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "$qt6Dir\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          Get-ChildItem $qt6Dir | Select-Object -First 10
 
       - name: Download libmpv SDK
         shell: pwsh
