@@ -249,6 +249,12 @@ cmake --build build --config Release
 - Правка CMake (`CMakeLists.txt`): если `MPV_ROOT` задан, но libmpv не нашли — теперь `FATAL_ERROR` вместо `WARNING`. Без `MPV_ROOT` поведение мягкое (для UI-разработки без mpv SDK).
 - Затронутые файлы: `src/core/WallpaperEngine.cpp`, `.github/workflows/build-windows.yml`, `CMakeLists.txt`.
 
+### 2026-05-29 — CI: генерация mpv.lib из dumpbin (нет .def в архиве)
+- Прошлый CI-шаг ожидал `.def` в распакованном mpv-dev и падал: `mpv-dev: .def file not found under D:\a\...\mpv-dev`. shinchiro в свежих архивах кладёт `libmpv-2.dll` + MinGW-ный `libmpv.dll.a`, но **не** кладёт `.def` и **не** кладёт MSVC-совместимый `.lib`. Использовать `.dll.a` с MSVC нельзя — формат другой.
+- Правка: шаг сначала ищет любой `*.def` (для совместимости с возможными будущими билдами), и если не нашёл — генерирует `.def` сам через `dumpbin /exports libmpv-2.dll`, парсит таблицу экспортов и пишет `LIBRARY libmpv-2 / EXPORTS …`. Затем как и раньше — `lib.exe /def:mpv.def /out:lib/mpv.lib /machine:X64`.
+- Шаг падает, если: нет `libmpv-2.dll` под `MPV_ROOT`, `dumpbin` отдал ненулевой код, в выходе `dumpbin` нет таблицы экспортов, `lib.exe` упал, `mpv.lib` не появился. То есть в портабль снова не попадёт stub-сборка.
+- Затронутые файлы: `.github/workflows/build-windows.yml`.
+
 ### Предложение по улучшению
 Реализовать паузу обоев при полноэкранных приложениях (`Settings.pauseOnFullscreen` уже есть в UI, но не подключена к движку). На Windows достаточно периодически опрашивать `SHQueryUserNotificationState` из `shellapi.h` (или ловить `QUNS_RUNNING_D3D_FULL_SCREEN` / `QUNS_PRESENTATION_MODE`) с интервалом 1–2 с. Когда состояние «полный экран» — звать `MpvObject::pause()`, иначе `play()`. Это снимет нагрузку на GPU во время игр и видео и закроет реально востребованный сценарий, под который в настройках уже стоит переключатель.
 

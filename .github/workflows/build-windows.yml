@@ -86,23 +86,55 @@ jobs:
           if (-not $includeDir) { throw "mpv-dev: include/ not found" }
           $mpvRoot = $includeDir.Parent.FullName
 
-          # shinchiro's mpv-dev archive ships libmpv-2.dll + mpv.def but no
-          # MSVC import library. Generate mpv.lib from the .def so CMake's
-          # find_library can pick it up.
-          $defFile = Get-ChildItem -Recurse -Path $mpvRoot -Filter "*.def" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $defFile) { throw "mpv-dev: .def file not found under $mpvRoot" }
-          $libDir = Join-Path $mpvRoot "lib"
+          # shinchiro's mpv-dev archive ships libmpv-2.dll plus a MinGW
+          # libmpv.dll.a — neither is usable as an MSVC import library.
+          # Generate mpv.lib ourselves: dumpbin /exports -> .def -> lib.exe.
+          $dll = Get-ChildItem -Recurse -Path $mpvRoot -Filter "libmpv-2.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $dll) {
+              $dll = Get-ChildItem -Recurse -Path $mpvRoot -Filter "mpv-2.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $dll) { throw "mpv-dev: libmpv-2.dll / mpv-2.dll not found under $mpvRoot" }
+          Write-Host "mpv DLL: $($dll.FullName)"
+
+          $libDir  = Join-Path $mpvRoot "lib"
           New-Item -ItemType Directory -Force -Path $libDir | Out-Null
-          $libOut = Join-Path $libDir "mpv.lib"
-          Write-Host "Generating $libOut from $($defFile.FullName)"
+          $defOut  = Join-Path $libDir "mpv.def"
+          $libOut  = Join-Path $libDir "mpv.lib"
+
+          # Look up an existing .def first; fall back to dumpbin if absent.
+          $existingDef = Get-ChildItem -Recurse -Path $mpvRoot -Filter "*.def" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($existingDef) {
+              Write-Host "Using existing .def: $($existingDef.FullName)"
+              Copy-Item $existingDef.FullName $defOut -Force
+          } else {
+              Write-Host "No .def shipped; generating one from $($dll.Name) via dumpbin"
+              $dumpbinOut = & dumpbin.exe /exports $dll.FullName
+              if ($LASTEXITCODE -ne 0) { throw "dumpbin failed with exit code $LASTEXITCODE" }
+              $exports = @()
+              $inTable = $false
+              foreach ($line in $dumpbinOut) {
+                  if ($line -match '^\s*ordinal\s+hint\s+RVA\s+name') { $inTable = $true; continue }
+                  if (-not $inTable) { continue }
+                  if ($line -match '^\s*Summary') { break }
+                  # Format: "    1    0 00001234 mpv_create"
+                  if ($line -match '^\s*\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)') {
+                      $exports += $Matches[1]
+                  }
+              }
+              if ($exports.Count -eq 0) { throw "dumpbin produced no exports for $($dll.FullName)" }
+              $defLines = @("LIBRARY $($dll.BaseName)", "EXPORTS") + $exports
+              Set-Content -Path $defOut -Value $defLines -Encoding ASCII
+              Write-Host "Wrote $defOut with $($exports.Count) exports"
+          }
+
           # lib.exe is on PATH because ilammy/msvc-dev-cmd already ran.
-          & lib.exe "/def:$($defFile.FullName)" "/out:$libOut" /machine:X64
+          & lib.exe "/def:$defOut" "/out:$libOut" /machine:X64
           if ($LASTEXITCODE -ne 0) { throw "lib.exe failed with exit code $LASTEXITCODE" }
           if (-not (Test-Path $libOut)) { throw "mpv.lib was not produced" }
 
           echo "MPV_ROOT=$mpvRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "MPV root: $mpvRoot"
-          Get-ChildItem -Recurse $mpvRoot | Select-Object -First 40 | ForEach-Object { Write-Host $_.FullName }
+          Get-ChildItem -Recurse $mpvRoot | Select-Object -First 60 | ForEach-Object { Write-Host $_.FullName }
 
       - name: Configure
         shell: cmd
