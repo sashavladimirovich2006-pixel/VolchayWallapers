@@ -205,6 +205,14 @@ cmake --build build --config Release
 - `SystemTray` получил третий пункт «Включить / выключить обои» и сигнал `toggleWallpaperRequested`. Обработчик в `main.cpp` инвертирует `wallpaperEnabled`, но если текущий файл пуст — пишет в лог Warn и ничего не делает (нечего показывать).
 - Затронутые файлы: `src/core/Settings.{h,cpp}`, `src/core/WallpaperEngine.{h,cpp}`, `src/main.cpp`, `src/qml/Main.qml`, `src/qml/pages/HomePage.qml`, `src/qml/pages/LibraryPage.qml`, `src/qml/pages/SettingsPage.qml`. `SystemTray.{h,cpp}` уже содержали сигнал — изменений не потребовалось.
 
+### 2026-05-29 — CI: убран `-m qtsvg` из aqt install-qt
+- Прогон `Build (Windows, MSVC, Qt6)` падал на шаге `Install Qt via aqtinstall`:
+  `ERROR : The packages ['qtsvg'] were not found while parsing XML of package information!`
+  — и на основном зеркале, и на fallback `download.qt.io`.
+- Причина: `qtsvg` в Qt 6 — это часть базовой установки (модуль внутри `qtbase` pos-инсталляции), а не отдельный аддон. Его нельзя запрашивать через `-m qtsvg`, иначе aqt не находит такую запись в `Updates.xml` и валит шаг целиком, при этом базовый Qt тоже не ставится.
+- Правка: из обоих вызовов `python -m aqt install-qt … -m qtsvg …` убран флаг `-m qtsvg`. Сам модуль `Qt6::Svg` (нужный по `find_package(Qt6 COMPONENTS … Svg …)`) поставится с базовым Qt автоматически.
+- Затронутые файлы: `.github/workflows/build-windows.yml`.
+
 ### Предложение по улучшению
 Реализовать паузу обоев при полноэкранных приложениях (`Settings.pauseOnFullscreen` уже есть в UI, но не подключена к движку). На Windows достаточно периодически опрашивать `SHQueryUserNotificationState` из `shellapi.h` (или ловить `QUNS_RUNNING_D3D_FULL_SCREEN` / `QUNS_PRESENTATION_MODE`) с интервалом 1–2 с. Когда состояние «полный экран» — звать `MpvObject::pause()`, иначе `play()`. Это снимет нагрузку на GPU во время игр и видео и закроет реально востребованный сценарий, под который в настройках уже стоит переключатель.
 

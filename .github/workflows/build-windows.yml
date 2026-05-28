@@ -47,10 +47,11 @@ jobs:
           python -m aqt version
           if errorlevel 1 ( echo ::error::aqt version failed & exit /b 1 )
           echo === download Qt (primary mirror) ===
-          python -m aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 -m qtsvg -O "%GITHUB_WORKSPACE%\Qt"
+          rem qtsvg is part of base Qt 6 install, not a separate module — do not pass it via -m.
+          python -m aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 -O "%GITHUB_WORKSPACE%\Qt"
           if errorlevel 1 (
             echo Primary mirror failed, retrying with qt.io fallback
-            python -m aqt install-qt -b https://download.qt.io/ windows desktop %QT_VERSION% win64_msvc2022_64 -m qtsvg -O "%GITHUB_WORKSPACE%\Qt"
+            python -m aqt install-qt -b https://download.qt.io/ windows desktop %QT_VERSION% win64_msvc2022_64 -O "%GITHUB_WORKSPACE%\Qt"
             if errorlevel 1 ( echo ::error::aqt install-qt failed on both mirrors & exit /b 1 )
           )
           set "QT_DIR=%GITHUB_WORKSPACE%\Qt\%QT_VERSION%\msvc2022_64"
