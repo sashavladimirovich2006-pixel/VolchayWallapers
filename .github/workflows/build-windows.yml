@@ -36,17 +36,25 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           python -m pip install --upgrade pip
-          python -m pip install "aqtinstall==3.1.*" "py7zr"
+          python -m pip install "aqtinstall>=3.2,<4" "py7zr"
+          python -m aqt version
           $qtDir = "${{ github.workspace }}\Qt"
           New-Item -ItemType Directory -Force -Path $qtDir | Out-Null
+          Write-Host "Listing available Qt 6.x desktop versions for sanity:"
+          python -m aqt list-qt windows desktop --spec "6.8" || Write-Host "list-qt failed; continuing"
           python -m aqt install-qt windows desktop ${{ env.QT_VERSION }} win64_msvc2022_64 `
               -m qtsvg `
               -O $qtDir
           $qt6Dir = "$qtDir\${{ env.QT_VERSION }}\msvc2022_64"
-          echo "Qt6_DIR=$qt6Dir" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "CMAKE_PREFIX_PATH=$qt6Dir" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "$qt6Dir\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-          Get-ChildItem $qt6Dir | Select-Object -First 10
+          if (-not (Test-Path $qt6Dir)) {
+              Write-Host "Expected dir not found: $qt6Dir"
+              Get-ChildItem -Recurse $qtDir -Depth 3 | ForEach-Object { Write-Host $_.FullName }
+              throw "Qt install layout unexpected"
+          }
+          echo "Qt6_DIR=$qt6Dir"             | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CMAKE_PREFIX_PATH=$qt6Dir"   | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "$qt6Dir\bin"                 | Out-File -FilePath $env:GITHUB_PATH -Append
+          Get-ChildItem $qt6Dir | Select-Object -First 12
 
       - name: Download libmpv SDK
         shell: pwsh
