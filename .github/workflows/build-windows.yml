@@ -11,10 +11,10 @@ on:
 jobs:
   build:
     name: Build (Windows, MSVC, Qt6)
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     env:
-      QT_VERSION: 6.8.0
+      QT_VERSION: 6.9.1
       BUILD_TYPE: Release
 
     steps:
