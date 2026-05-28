@@ -1,0 +1,44 @@
+# Build / IDE
+build/
+build-*/
+out/
+cmake-build-*/
+.vs/
+.vscode/
+*.user
+*.user.*
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+Makefile
+cmake_install.cmake
+
+# Qt
+*.qmlc
+*.jsc
+*_qmlcache.qrc
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.qm
+
+# Binaries
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.o
+*.a
+
+# Logs / runtime
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

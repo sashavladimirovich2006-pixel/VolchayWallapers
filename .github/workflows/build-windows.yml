@@ -1,0 +1,121 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [ main ]
+    tags:     [ "v*" ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (Windows, MSVC, Qt6)
+    runs-on: windows-latest
+
+    env:
+      QT_VERSION: 6.7.2
+      BUILD_TYPE: Release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2019_64
+          modules: 'qtmultimedia qtsvg'
+          cache: true
+
+      - name: Download libmpv SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url  = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20250101/mpv-dev-x86_64-20250101-git-2cf42a4.7z"
+          $dst  = "${{ github.workspace }}\mpv-dev.7z"
+          $root = "${{ github.workspace }}\mpv-dev"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          # Try the primary URL, fall back to the latest mpv-dev artifact tag listing if 404.
+          try {
+              Invoke-WebRequest -Uri $url -OutFile $dst
+          } catch {
+              $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases" `
+                                       -Headers @{ "Authorization" = "Bearer ${{ secrets.GITHUB_TOKEN }}"; "User-Agent" = "ci" }
+              $asset = $rel | ForEach-Object { $_.assets } | Where-Object { $_.name -like "mpv-dev-x86_64-*.7z" } | Select-Object -First 1
+              if (-not $asset) { throw "No mpv-dev asset found" }
+              Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dst
+          }
+          7z x $dst -o"$root" -y | Out-Null
+          # Some archives put include/ at root, others under a subdir. Normalize:
+          $includeDir = Get-ChildItem -Recurse -Path $root -Directory | Where-Object { $_.Name -eq "include" } | Select-Object -First 1
+          if (-not $includeDir) { throw "mpv-dev: include/ not found" }
+          $mpvRoot = $includeDir.Parent.FullName
+          echo "MPV_ROOT=$mpvRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "MPV root: $mpvRoot"
+          Get-ChildItem -Recurse $mpvRoot | Select-Object -First 30 | ForEach-Object { Write-Host $_.FullName }
+
+      - name: Configure
+        shell: cmd
+        run: |
+          cmake -S . -B build -G "Ninja" ^
+                -DCMAKE_BUILD_TYPE=%BUILD_TYPE% ^
+                -DCMAKE_PREFIX_PATH="%Qt6_DIR%" ^
+                -DMPV_ROOT="%MPV_ROOT%"
+
+      - name: Build
+        shell: cmd
+        run: cmake --build build --config %BUILD_TYPE% --parallel
+
+      - name: Stage artifacts
+        shell: pwsh
+        run: |
+          $stage = "${{ github.workspace }}\stage"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "build\VolchayWallpapers.exe" $stage
+          Copy-Item "LICENSE" $stage
+          Copy-Item "README.md" $stage
+          # mpv runtime DLL
+          $dll = Get-ChildItem -Recurse -Path "$env:MPV_ROOT" -Filter "libmpv-2.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $dll) {
+              $dll = Get-ChildItem -Recurse -Path "$env:MPV_ROOT" -Filter "mpv-2.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if ($dll) { Copy-Item $dll.FullName $stage }
+          # windeployqt
+          & "$env:Qt6_DIR\bin\windeployqt.exe" --release --qmldir "src\qml" --no-translations --no-system-d3d-compiler --no-opengl-sw "$stage\VolchayWallpapers.exe"
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: cmd
+        run: '"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\volchay.iss'
+
+      - name: Upload portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: VolchayWallpapers-portable
+          path: stage/**
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: VolchayWallpapers-installer
+          path: installer/Output/*.exe
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            installer/Output/*.exe
+            stage/**
