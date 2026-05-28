@@ -14,7 +14,7 @@ jobs:
     runs-on: windows-latest
 
     env:
-      QT_VERSION: 6.7.2
+      QT_VERSION: 6.8.0
       BUILD_TYPE: Release
 
     steps:
@@ -32,8 +32,8 @@ jobs:
           version: ${{ env.QT_VERSION }}
           host: windows
           target: desktop
-          arch: win64_msvc2019_64
-          modules: 'qtmultimedia qtsvg'
+          arch: win64_msvc2022_64
+          modules: 'qtsvg'
           cache: true
 
       - name: Download libmpv SDK
