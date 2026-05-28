@@ -213,6 +213,19 @@ cmake --build build --config Release
 - Правка: из обоих вызовов `python -m aqt install-qt … -m qtsvg …` убран флаг `-m qtsvg`. Сам модуль `Qt6::Svg` (нужный по `find_package(Qt6 COMPONENTS … Svg …)`) поставится с базовым Qt автоматически.
 - Затронутые файлы: `.github/workflows/build-windows.yml`.
 
+### 2026-05-29 — CI: оставлена только портативная сборка
+- Скачанная installer-версия не запускалась у пользователя; до выяснения причины убираем installer-ветку из CI, чтобы не плодить артефакт «который не работает».
+- Из `build-windows.yml` удалены шаги `Install Inno Setup`, `Build installer`, `Upload installer`. В `Create GitHub Release` остаётся только `stage/**`.
+- Затронутые файлы: `.github/workflows/build-windows.yml`. Скрипт `installer/volchay.iss` оставлен в репозитории — пригодится, когда вернём installer-сценарий.
+
+### 2026-05-29 — CI: ужесточение Stage artifacts (диагностика «не запускается»)
+- Чтобы поймать, чего не хватает в портативной сборке, шаг `Stage artifacts` теперь:
+  - падает, если `libmpv-2.dll` / `mpv-2.dll` не нашлись под `MPV_ROOT` (раньше молча пропускал — отсюда и «программа не запускается»);
+  - падает, если `windeployqt` вернул ненулевой код;
+  - убран флаг `--no-opengl-sw`: теперь Qt кладёт `opengl32sw.dll` для машин без подходящего GPU-драйвера. Стоимость — несколько мегабайт; цена за это — приложение запускается на тестовых ВМ и старых GPU.
+  - в конец шага добавлен дамп содержимого `stage/` с размерами файлов — по этому листингу видно, что именно попало в портабельную папку (Qt6Core.dll, Qt6Quick.dll, libmpv-2.dll, plugins/platforms/qwindows.dll, qml/QtQuick/Effects/…).
+- Затронутые файлы: `.github/workflows/build-windows.yml`.
+
 ### Предложение по улучшению
 Реализовать паузу обоев при полноэкранных приложениях (`Settings.pauseOnFullscreen` уже есть в UI, но не подключена к движку). На Windows достаточно периодически опрашивать `SHQueryUserNotificationState` из `shellapi.h` (или ловить `QUNS_RUNNING_D3D_FULL_SCREEN` / `QUNS_PRESENTATION_MODE`) с интервалом 1–2 с. Когда состояние «полный экран» — звать `MpvObject::pause()`, иначе `play()`. Это снимет нагрузку на GPU во время игр и видео и закроет реально востребованный сценарий, под который в настройках уже стоит переключатель.
 

@@ -104,27 +104,38 @@ jobs:
       - name: Stage artifacts
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $stage = "${{ github.workspace }}\stage"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item "build\VolchayWallpapers.exe" $stage
           Copy-Item "LICENSE" $stage
           Copy-Item "README.md" $stage
-          # mpv runtime DLL
+
+          # mpv runtime DLL — required at runtime; fail loudly if missing.
           $dll = Get-ChildItem -Recurse -Path "$env:MPV_ROOT" -Filter "libmpv-2.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $dll) {
               $dll = Get-ChildItem -Recurse -Path "$env:MPV_ROOT" -Filter "mpv-2.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
           }
-          if ($dll) { Copy-Item $dll.FullName $stage }
-          # windeployqt
-          & "$env:Qt6_DIR\bin\windeployqt.exe" --release --qmldir "src\qml" --no-translations --no-system-d3d-compiler --no-opengl-sw "$stage\VolchayWallpapers.exe"
+          if (-not $dll) { throw "libmpv runtime DLL not found under $env:MPV_ROOT" }
+          Copy-Item $dll.FullName $stage
+          Write-Host "mpv DLL: $($dll.FullName)"
 
-      - name: Install Inno Setup
-        shell: pwsh
-        run: choco install innosetup -y --no-progress
+          # windeployqt — pull Qt runtime + QML imports + plugins.
+          # --qmldir src/qml: scan QML imports (QtQuick.Effects, our Volchay.Mpv stuff, etc.)
+          # We KEEP plugins (no --no-plugins) and OpenGL SW fallback (drop --no-opengl-sw)
+          # so the app launches on machines without a real GPU driver match.
+          & "$env:Qt6_DIR\bin\windeployqt.exe" `
+              --release `
+              --qmldir "src\qml" `
+              --no-translations `
+              --no-system-d3d-compiler `
+              "$stage\VolchayWallpapers.exe"
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with exit code $LASTEXITCODE" }
 
-      - name: Build installer
-        shell: cmd
-        run: '"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\volchay.iss'
+          Write-Host "=== stage/ manifest ==="
+          Get-ChildItem -Recurse $stage | ForEach-Object {
+              "{0,10}  {1}" -f $_.Length, $_.FullName.Substring($stage.Length + 1)
+          }
 
       - name: Upload portable
         uses: actions/upload-artifact@v4
@@ -132,16 +143,9 @@ jobs:
           name: VolchayWallpapers-portable
           path: stage/**
 
-      - name: Upload installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: VolchayWallpapers-installer
-          path: installer/Output/*.exe
-
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            installer/Output/*.exe
             stage/**
