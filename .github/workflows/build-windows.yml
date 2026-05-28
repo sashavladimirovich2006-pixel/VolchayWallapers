@@ -26,6 +26,11 @@ jobs:
         with:
           arch: x64
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -34,7 +39,10 @@ jobs:
           target: desktop
           arch: win64_msvc2022_64
           modules: 'qtsvg'
-          cache: true
+          aqtversion: '==3.1.*'
+          py7zrversion: '==0.21.*'
+          cache: false
+          setup-python: false
 
       - name: Download libmpv SDK
         shell: pwsh
