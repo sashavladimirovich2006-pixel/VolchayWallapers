@@ -32,30 +32,30 @@ jobs:
           python-version: '3.12'
 
       - name: Install Qt via aqtinstall
-        shell: pwsh
+        shell: cmd
         run: |
-          $ErrorActionPreference = "Stop"
+          echo === python ===
+          python --version
+          if errorlevel 1 ( echo ::error::python not on PATH & exit /b 1 )
+          echo === pip upgrade ===
           python -m pip install --upgrade pip
+          if errorlevel 1 ( echo ::error::pip upgrade failed & exit /b 1 )
+          echo === install aqtinstall ===
           python -m pip install "aqtinstall>=3.2,<4" "py7zr"
+          if errorlevel 1 ( echo ::error::aqtinstall install failed & exit /b 1 )
+          echo === aqt version ===
           python -m aqt version
-          $qtDir = "${{ github.workspace }}\Qt"
-          New-Item -ItemType Directory -Force -Path $qtDir | Out-Null
-          Write-Host "::group::aqt install-qt"
-          python -m aqt install-qt windows desktop ${{ env.QT_VERSION }} win64_msvc2022_64 -m qtsvg -O $qtDir
-          if ($LASTEXITCODE -ne 0) { throw "aqt install-qt exited $LASTEXITCODE" }
-          Write-Host "::endgroup::"
-          $qt6Dir = "$qtDir\${{ env.QT_VERSION }}\msvc2022_64"
-          if (-not (Test-Path $qt6Dir)) {
-              Write-Host "Expected Qt dir not found: $qt6Dir"
-              Write-Host "Actual layout:"
-              Get-ChildItem -Recurse $qtDir -Depth 3 | ForEach-Object { Write-Host $_.FullName }
-              throw "Qt install layout unexpected"
-          }
-          echo "Qt6_DIR=$qt6Dir"             | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "CMAKE_PREFIX_PATH=$qt6Dir"   | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "$qt6Dir\bin"                 | Out-File -FilePath $env:GITHUB_PATH -Append
-          Write-Host "Qt installed at: $qt6Dir"
-          Get-ChildItem $qt6Dir | Select-Object -First 12 | ForEach-Object { Write-Host $_.FullName }
+          if errorlevel 1 ( echo ::error::aqt version failed & exit /b 1 )
+          echo === download Qt ===
+          python -m aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 -m qtsvg -O "%GITHUB_WORKSPACE%\Qt"
+          if errorlevel 1 ( echo ::error::aqt install-qt failed & exit /b 1 )
+          set "QT_DIR=%GITHUB_WORKSPACE%\Qt\%QT_VERSION%\msvc2022_64"
+          if not exist "%QT_DIR%\bin\qmake.exe" ( echo ::error::qmake.exe missing under %QT_DIR% & dir "%GITHUB_WORKSPACE%\Qt" /s /b & exit /b 1 )
+          echo Qt6_DIR=%QT_DIR%>>%GITHUB_ENV%
+          echo CMAKE_PREFIX_PATH=%QT_DIR%>>%GITHUB_ENV%
+          echo %QT_DIR%\bin>>%GITHUB_PATH%
+          echo === Done ===
+          dir "%QT_DIR%"
 
       - name: Download libmpv SDK
         shell: pwsh
