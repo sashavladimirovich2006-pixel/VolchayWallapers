@@ -90,6 +90,15 @@ int main(int argc, char* argv[]) {
         engine.detach();
         QCoreApplication::quit();
     });
+    QObject::connect(&tray, &SystemTray::toggleWallpaperRequested, &app, [&] {
+        const bool desired = !settings.wallpaperEnabled();
+        if (desired && settings.currentWallpaper().isEmpty()) {
+            Logger::instance().log(Logger::Warn, "Tray",
+                "Toggle requested but no wallpaper selected");
+            return;
+        }
+        settings.setWallpaperEnabled(desired);
+    });
     tray.show();
 
     const int rc = app.exec();

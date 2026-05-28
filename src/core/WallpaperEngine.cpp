@@ -19,10 +19,28 @@ WallpaperEngine::WallpaperEngine(Settings* settings, QObject* parent)
         connect(m_settings, &Settings::targetMonitorChanged,
                 this, &WallpaperEngine::resyncGeometry);
     }
+    // Re-publish monitors list whenever displays change.
+    if (auto* gui = qGuiApp) {
+        connect(gui, &QGuiApplication::screenAdded,   this, &WallpaperEngine::monitorsChanged);
+        connect(gui, &QGuiApplication::screenRemoved, this, &WallpaperEngine::monitorsChanged);
+    }
 }
 
 WallpaperEngine::~WallpaperEngine() {
     detach();
+}
+
+QStringList WallpaperEngine::monitors() const {
+    QStringList out;
+    out << QStringLiteral("Все мониторы (виртуальный рабочий стол)");
+    const auto screens = QGuiApplication::screens();
+    for (int i = 0; i < screens.size(); ++i) {
+        const QRect g = screens.at(i)->geometry();
+        const QString name = screens.at(i)->name();
+        out << QStringLiteral("%1. %2x%3 — %4")
+                  .arg(i + 1).arg(g.width()).arg(g.height()).arg(name);
+    }
+    return out;
 }
 
 QRect WallpaperEngine::computeTargetGeometry() const {

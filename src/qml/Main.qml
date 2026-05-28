@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
 import QtQuick.Effects
+import Volchay.Mpv 1.0
 import "components"
 import "pages"
 
@@ -155,7 +156,7 @@ ApplicationWindow {
     // ----- Wallpaper host window (separate, parented to WorkerW) -----
     Loader {
         id: wallpaperHostLoader
-        active: false
+        active: Settings.wallpaperEnabled && Settings.currentWallpaper.length > 0
         sourceComponent: Component {
             Window {
                 id: hostWindow
@@ -164,23 +165,22 @@ ApplicationWindow {
                 color: "black"
                 title: "VolchayWallpaperHost"
 
-                // The actual video item
-                Loader {
+                MpvObject {
+                    id: wallpaperMpv
                     anchors.fill: parent
-                    sourceComponent: previewComponent
+                    source: Settings.currentWallpaper
+                    volume: Settings.volume
+                    mute: Settings.muteOnBattery && Settings.volume === 0
+                    scaleMode: Settings.scaleMode
                 }
 
-                Component.onCompleted: Engine.attach(hostWindow)
+                Component.onCompleted: {
+                    if (!Engine.attach(hostWindow)) {
+                        Settings.wallpaperEnabled = false
+                    }
+                }
+                Component.onDestruction: Engine.detach()
             }
-        }
-    }
-
-    Component {
-        id: previewComponent
-        // Lazy-imported MpvObject; the import must be present in the file using it.
-        Item {
-            anchors.fill: parent
-            // The actual mpv component is provided by HomePage when applying.
         }
     }
 }

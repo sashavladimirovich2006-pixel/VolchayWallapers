@@ -120,6 +120,20 @@ Item {
                         Item { Layout.fillWidth: true }
                     }
 
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text { text: qsTr("Монитор"); color: Theme.text; Layout.preferredWidth: 180 }
+                        ComboBox {
+                            Layout.fillWidth: true
+                            model: Engine.monitors
+                            // index 0 = "all monitors" => Settings.targetMonitor = -1
+                            currentIndex: Settings.targetMonitor < 0
+                                          ? 0
+                                          : Math.min(Settings.targetMonitor + 1, model.length - 1)
+                            onActivated: Settings.targetMonitor = (currentIndex === 0 ? -1 : currentIndex - 1)
+                        }
+                    }
+
                     Switch {
                         text: qsTr("Пауза при полноэкранных приложениях")
                         checked: Settings.pauseOnFullscreen

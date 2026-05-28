@@ -17,6 +17,7 @@ class Settings : public QObject {
     Q_PROPERTY(int targetMonitor READ targetMonitor WRITE setTargetMonitor NOTIFY targetMonitorChanged)
     Q_PROPERTY(bool autoStart READ autoStart WRITE setAutoStart NOTIFY autoStartChanged)
     Q_PROPERTY(QString currentWallpaper READ currentWallpaper WRITE setCurrentWallpaper NOTIFY currentWallpaperChanged)
+    Q_PROPERTY(bool wallpaperEnabled READ wallpaperEnabled WRITE setWallpaperEnabled NOTIFY wallpaperEnabledChanged)
 
 public:
     explicit Settings(QObject* parent = nullptr);
@@ -48,6 +49,9 @@ public:
     QString currentWallpaper() const;
     void setCurrentWallpaper(const QString& v);
 
+    bool wallpaperEnabled() const;
+    void setWallpaperEnabled(bool v);
+
     Q_INVOKABLE QStringList libraryPaths() const;
     Q_INVOKABLE void addLibraryPath(const QString& path);
     Q_INVOKABLE void removeLibraryPath(const QString& path);
@@ -62,6 +66,7 @@ signals:
     void targetMonitorChanged();
     void autoStartChanged();
     void currentWallpaperChanged();
+    void wallpaperEnabledChanged();
     void libraryChanged();
 
 private:

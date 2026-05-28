@@ -82,7 +82,11 @@ Item {
                 subtitle: filePath
                 filePath: model.filePath
                 selected: Settings.currentWallpaper === model.filePath
-                onApply: Settings.currentWallpaper = model.filePath
+                onApply: {
+                    Settings.currentWallpaper = model.filePath
+                    if (Settings.wallpaperEnabled) Settings.wallpaperEnabled = false
+                    Settings.wallpaperEnabled = true
+                }
                 onRemove: Library.removeAt(index)
                 onPreview: Settings.currentWallpaper = model.filePath
             }

@@ -2,7 +2,12 @@
 #include "Logger.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QStandardPaths>
+
+#ifdef Q_OS_WIN
+#  include <QSettings>
+#endif
 
 namespace volchay {
 
@@ -74,6 +79,19 @@ bool Settings::autoStart() const { return m_s.value("system/autoStart", false).t
 void Settings::setAutoStart(bool v) {
     if (v == autoStart()) return;
     m_s.setValue("system/autoStart", v);
+#ifdef Q_OS_WIN
+    QSettings run(R"(HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run)",
+                  QSettings::NativeFormat);
+    if (v) {
+        const QString exe = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
+        run.setValue("VolchayWallpapers", QString("\"%1\"").arg(exe));
+        Logger::instance().log(Logger::Info, "Settings",
+            QStringLiteral("Autostart enabled: %1").arg(exe));
+    } else {
+        run.remove("VolchayWallpapers");
+        Logger::instance().log(Logger::Info, "Settings", "Autostart disabled");
+    }
+#endif
     emit autoStartChanged();
 }
 
@@ -82,6 +100,15 @@ void Settings::setCurrentWallpaper(const QString& v) {
     if (v == currentWallpaper()) return;
     m_s.setValue("state/currentWallpaper", v);
     emit currentWallpaperChanged();
+}
+
+bool Settings::wallpaperEnabled() const { return m_s.value("state/wallpaperEnabled", false).toBool(); }
+void Settings::setWallpaperEnabled(bool v) {
+    if (v == wallpaperEnabled()) return;
+    m_s.setValue("state/wallpaperEnabled", v);
+    Logger::instance().log(Logger::Info, "Settings",
+        QStringLiteral("Wallpaper %1").arg(v ? "ON" : "OFF"));
+    emit wallpaperEnabledChanged();
 }
 
 QStringList Settings::libraryPaths() const {

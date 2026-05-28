@@ -24,11 +24,15 @@ class Settings;
 class WallpaperEngine : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool active READ active NOTIFY activeChanged)
+    Q_PROPERTY(QStringList monitors READ monitors NOTIFY monitorsChanged)
 public:
     explicit WallpaperEngine(Settings* settings, QObject* parent = nullptr);
     ~WallpaperEngine() override;
 
     bool active() const { return m_active; }
+
+    /// Список «человекочитаемых» имён мониторов: "1: 1920x1080 — Dell U2412M".
+    QStringList monitors() const;
 
     /// Применить переданное Qt-окно как живые обои.
     Q_INVOKABLE bool attach(QQuickWindow* window);
@@ -41,6 +45,7 @@ public:
 
 signals:
     void activeChanged();
+    void monitorsChanged();
     void engineError(const QString& message);
 
 private:

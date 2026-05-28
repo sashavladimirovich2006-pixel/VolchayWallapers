@@ -156,15 +156,16 @@ Item {
                             enabled: page.previewPath.length > 0
                             onClicked: {
                                 Settings.currentWallpaper = page.previewPath
-                                // Wallpaper host window is auto-spawned in Main.qml; toggle it.
-                                // We use a simple convention: assigning currentWallpaper triggers attach.
+                                // Toggle off and on to force a fresh attach (new file).
+                                if (Settings.wallpaperEnabled) Settings.wallpaperEnabled = false
+                                Settings.wallpaperEnabled = true
                             }
                         }
                         Button {
                             Layout.fillWidth: true
                             visible: Engine.active
                             text: qsTr("Остановить")
-                            onClicked: Engine.detach()
+                            onClicked: Settings.wallpaperEnabled = false
                             background: Rectangle {
                                 radius: 8
                                 color: parent.hovered ? Theme.surfaceAlt : "transparent"
