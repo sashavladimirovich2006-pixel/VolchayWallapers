@@ -226,6 +226,16 @@ cmake --build build --config Release
   - в конец шага добавлен дамп содержимого `stage/` с размерами файлов — по этому листингу видно, что именно попало в портабельную папку (Qt6Core.dll, Qt6Quick.dll, libmpv-2.dll, plugins/platforms/qwindows.dll, qml/QtQuick/Effects/…).
 - Затронутые файлы: `.github/workflows/build-windows.yml`.
 
+### 2026-05-29 — Багфикс: дубль присваивания свойств в WallpaperCard.qml
+- Программа собиралась, но падала на старте до показа окна. В логе (`%LOCALAPPDATA%\Volchay\VolchayWallpapers\logs\volchay-2026-05-29.log`) повторяющаяся серия:
+  - `qrc:/src/qml/components/WallpaperCard.qml:21:5: Property value set multiple times`
+  - `qrc:/src/qml/components/WallpaperCard.qml:22:5: Property value set multiple times`
+  - `Type WallpaperCard unavailable` → `Type LibraryPage unavailable` → `FATAL Failed to load Main.qml`.
+- Причина: в `WallpaperCard.qml` `border.color` и `border.width` задавались дважды — сначала статически (`Theme.border` / `1`), потом сразу же условно через `selected`. Qt 6 запрещает множественное присваивание одного и того же свойства в декларативном блоке.
+- Правка: убраны статические инициализации `border.color`/`border.width` сверху; оставлено только условное (`selected ? Theme.accent : Theme.border` / `selected ? 2 : 1`) с `Behavior on border.color`. Поведение для невыделенной карточки не меняется.
+- Затронутые файлы: `src/qml/components/WallpaperCard.qml`.
+- Кстати, лог был не «отсутствует» — он лежит в `%LOCALAPPDATA%\Volchay\VolchayWallpapers\logs\`, а не рядом с exe. Это `QStandardPaths::AppLocalDataLocation` (см. `main.cpp:42`) — стандартное место для приложений Windows.
+
 ### Предложение по улучшению
 Реализовать паузу обоев при полноэкранных приложениях (`Settings.pauseOnFullscreen` уже есть в UI, но не подключена к движку). На Windows достаточно периодически опрашивать `SHQueryUserNotificationState` из `shellapi.h` (или ловить `QUNS_RUNNING_D3D_FULL_SCREEN` / `QUNS_PRESENTATION_MODE`) с интервалом 1–2 с. Когда состояние «полный экран» — звать `MpvObject::pause()`, иначе `play()`. Это снимет нагрузку на GPU во время игр и видео и закроет реально востребованный сценарий, под который в настройках уже стоит переключатель.
 
