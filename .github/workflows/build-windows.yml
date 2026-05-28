@@ -85,9 +85,24 @@ jobs:
           $includeDir = Get-ChildItem -Recurse -Path $root -Directory | Where-Object { $_.Name -eq "include" } | Select-Object -First 1
           if (-not $includeDir) { throw "mpv-dev: include/ not found" }
           $mpvRoot = $includeDir.Parent.FullName
+
+          # shinchiro's mpv-dev archive ships libmpv-2.dll + mpv.def but no
+          # MSVC import library. Generate mpv.lib from the .def so CMake's
+          # find_library can pick it up.
+          $defFile = Get-ChildItem -Recurse -Path $mpvRoot -Filter "*.def" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $defFile) { throw "mpv-dev: .def file not found under $mpvRoot" }
+          $libDir = Join-Path $mpvRoot "lib"
+          New-Item -ItemType Directory -Force -Path $libDir | Out-Null
+          $libOut = Join-Path $libDir "mpv.lib"
+          Write-Host "Generating $libOut from $($defFile.FullName)"
+          # lib.exe is on PATH because ilammy/msvc-dev-cmd already ran.
+          & lib.exe "/def:$($defFile.FullName)" "/out:$libOut" /machine:X64
+          if ($LASTEXITCODE -ne 0) { throw "lib.exe failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path $libOut)) { throw "mpv.lib was not produced" }
+
           echo "MPV_ROOT=$mpvRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "MPV root: $mpvRoot"
-          Get-ChildItem -Recurse $mpvRoot | Select-Object -First 30 | ForEach-Object { Write-Host $_.FullName }
+          Get-ChildItem -Recurse $mpvRoot | Select-Object -First 40 | ForEach-Object { Write-Host $_.FullName }
 
       - name: Configure
         shell: cmd

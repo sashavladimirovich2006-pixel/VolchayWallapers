@@ -43,6 +43,16 @@ find_library(MPV_LIBRARY
 )
 
 if(NOT MPV_INCLUDE_DIR OR NOT MPV_LIBRARY)
+    if(MPV_ROOT)
+        # User explicitly pointed at an SDK but we still couldn't resolve it —
+        # fail loudly so we don't ship a stub-mode build to users.
+        message(FATAL_ERROR
+            "MPV_ROOT='${MPV_ROOT}' was provided but libmpv could not be resolved. "
+            "Looked for 'mpv/client.h' under '${MPV_ROOT}/include' and a library "
+            "named mpv/libmpv/mpv-2/libmpv-2 under '${MPV_ROOT}/lib'. "
+            "On Windows, the import library may need to be generated from mpv.def "
+            "via 'lib.exe /def:mpv.def /out:mpv.lib'.")
+    endif()
     message(WARNING
         "libmpv not found. Set -DMPV_ROOT=<path>. "
         "Build will continue but the mpv backend will be stubbed.")

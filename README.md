@@ -236,6 +236,19 @@ cmake --build build --config Release
 - Затронутые файлы: `src/qml/components/WallpaperCard.qml`.
 - Кстати, лог был не «отсутствует» — он лежит в `%LOCALAPPDATA%\Volchay\VolchayWallpapers\logs\`, а не рядом с exe. Это `QStandardPaths::AppLocalDataLocation` (см. `main.cpp:42`) — стандартное место для приложений Windows.
 
+### 2026-05-29 — Чёрный экран на рабочем столе: WorkerW + libmpv stub
+- Симптом: после «Применить» весь рабочий стол становится чёрным, иконки исчезают, видео не показывается.
+- Лог раскрыл сразу две причины:
+  - `[Mpv] Built without libmpv (stub mode)` — сборка в CI собралась без libmpv, плеер в режиме заглушки.
+  - `[Engine] WorkerW not found, falling back to Progman` — наше окно прицепилось не к слою обоев (`WorkerW` без `SHELLDLL_DefView`), а к `Progman`. Progman перерисовывается **поверх** иконок и обоев. Это и есть «чёрный экран».
+- Правка алгоритма поиска WorkerW (`src/core/WallpaperEngine.cpp`):
+  - перебираем все top-level окна класса `WorkerW`, выбираем то, у которого **нет** дочернего `SHELLDLL_DefView` (это слой обоев). Раньше код искал WorkerW «как соседа DefView» через `FindWindowEx(nullptr, top, L"WorkerW", ...)` — на Windows 11 24H2 такой порядок не работает.
+  - убран Progman-fallback. Лучше отказать (тостом «Не удалось найти WorkerW»), чем поверх иконок нарисовать чёрный экран. `Settings.wallpaperEnabled` сбрасывается на `false` (логика уже была в `Main.qml` — `if (!Engine.attach(...)) Settings.wallpaperEnabled = false`).
+  - в лог пишется диагностика: сколько `WorkerW` нашли всего, сколько с `DefView`, какой выбрали. Это поможет, если на других сборках Windows алгоритм снова поведёт себя иначе.
+- Правка CI (`.github/workflows/build-windows.yml`): mpv-dev SDK от shinchiro содержит `libmpv-2.dll` и `mpv.def`, но **не** `.lib` для MSVC. Поэтому `find_library` молча уходил в `else`, и `VOLCHAY_HAVE_MPV` становился `OFF`. После распаковки SDK теперь генерируется `mpv.lib` командой `lib.exe /def:mpv.def /out:lib/mpv.lib /machine:X64`. Шаг падает, если `lib.exe` отдал ненулевой код или `mpv.lib` не появился (так что в портабль не попадёт нерабочий бинарь).
+- Правка CMake (`CMakeLists.txt`): если `MPV_ROOT` задан, но libmpv не нашли — теперь `FATAL_ERROR` вместо `WARNING`. Без `MPV_ROOT` поведение мягкое (для UI-разработки без mpv SDK).
+- Затронутые файлы: `src/core/WallpaperEngine.cpp`, `.github/workflows/build-windows.yml`, `CMakeLists.txt`.
+
 ### Предложение по улучшению
 Реализовать паузу обоев при полноэкранных приложениях (`Settings.pauseOnFullscreen` уже есть в UI, но не подключена к движку). На Windows достаточно периодически опрашивать `SHQueryUserNotificationState` из `shellapi.h` (или ловить `QUNS_RUNNING_D3D_FULL_SCREEN` / `QUNS_PRESENTATION_MODE`) с интервалом 1–2 с. Когда состояние «полный экран» — звать `MpvObject::pause()`, иначе `play()`. Это снимет нагрузку на GPU во время игр и видео и закроет реально востребованный сценарий, под который в настройках уже стоит переключатель.
 

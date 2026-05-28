@@ -61,17 +61,28 @@ QRect WallpaperEngine::computeTargetGeometry() const {
 
 struct EnumCtx {
     HWND result = nullptr;
+    int  totalWorkerW = 0;
+    int  withDefView  = 0;
 };
 
 static BOOL CALLBACK enumProc(HWND top, LPARAM lp) {
     auto* ctx = reinterpret_cast<EnumCtx*>(lp);
+
+    wchar_t cls[64] = {0};
+    GetClassNameW(top, cls, 64);
+    if (lstrcmpW(cls, L"WorkerW") != 0) return TRUE;
+
+    ctx->totalWorkerW++;
     HWND defView = FindWindowExW(top, nullptr, L"SHELLDLL_DefView", nullptr);
     if (defView) {
-        // The WorkerW we want is the NEXT sibling at the top level that
-        // does NOT contain SHELLDLL_DefView — it floats above wallpaper, below icons.
-        HWND worker = FindWindowExW(nullptr, top, L"WorkerW", nullptr);
-        if (worker) ctx->result = worker;
+        // This is the "icons" WorkerW — it hosts SHELLDLL_DefView/SysListView32.
+        // We do NOT want this one as our parent.
+        ctx->withDefView++;
+        return TRUE;
     }
+    // A top-level WorkerW WITHOUT SHELLDLL_DefView is the wallpaper layer.
+    // Take the last such window encountered (closest to desktop in Z-order).
+    ctx->result = top;
     return TRUE;
 }
 
@@ -82,17 +93,28 @@ void* WallpaperEngine::findWorkerW() {
         return nullptr;
     }
     DWORD_PTR result = 0;
-    // 0x052C is the magic message that asks Progman to spawn a WorkerW behind icons.
-    SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, &result);
-    SendMessageTimeoutW(progman, 0x052C, 0xD, 0, SMTO_NORMAL, 1000, &result);
-    SendMessageTimeoutW(progman, 0x052C, 0xD, 1, SMTO_NORMAL, 1000, &result);
+    // 0x052C asks Progman to spawn the second WorkerW (the wallpaper layer).
+    // Several wparam/lparam combinations are documented for different Windows
+    // builds; send all known-good ones.
+    SendMessageTimeoutW(progman, 0x052C, 0,    0, SMTO_NORMAL, 1000, &result);
+    SendMessageTimeoutW(progman, 0x052C, 0xD,  0, SMTO_NORMAL, 1000, &result);
+    SendMessageTimeoutW(progman, 0x052C, 0xD,  1, SMTO_NORMAL, 1000, &result);
 
     EnumCtx ctx;
     EnumWindows(&enumProc, reinterpret_cast<LPARAM>(&ctx));
+
+    Logger::instance().log(Logger::Info, "Engine",
+        QStringLiteral("WorkerW scan: total=%1 with-defview=%2 picked=0x%3")
+            .arg(ctx.totalWorkerW)
+            .arg(ctx.withDefView)
+            .arg(reinterpret_cast<quintptr>(ctx.result), 0, 16));
+
     if (!ctx.result) {
-        Logger::instance().log(Logger::Warn, "Engine",
-            "WorkerW not found, falling back to Progman");
-        return progman;
+        // Refuse rather than fall back to Progman — parenting to Progman
+        // paints over the desktop icons (black-screen bug).
+        Logger::instance().log(Logger::Error, "Engine",
+            "WorkerW (wallpaper layer) not found — refusing to attach");
+        return nullptr;
     }
     return ctx.result;
 }
