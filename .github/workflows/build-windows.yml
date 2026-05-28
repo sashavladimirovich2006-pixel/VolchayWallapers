@@ -46,9 +46,13 @@ jobs:
           echo === aqt version ===
           python -m aqt version
           if errorlevel 1 ( echo ::error::aqt version failed & exit /b 1 )
-          echo === download Qt ===
+          echo === download Qt (primary mirror) ===
           python -m aqt install-qt windows desktop %QT_VERSION% win64_msvc2022_64 -m qtsvg -O "%GITHUB_WORKSPACE%\Qt"
-          if errorlevel 1 ( echo ::error::aqt install-qt failed & exit /b 1 )
+          if errorlevel 1 (
+            echo Primary mirror failed, retrying with qt.io fallback
+            python -m aqt install-qt -b https://download.qt.io/ windows desktop %QT_VERSION% win64_msvc2022_64 -m qtsvg -O "%GITHUB_WORKSPACE%\Qt"
+            if errorlevel 1 ( echo ::error::aqt install-qt failed on both mirrors & exit /b 1 )
+          )
           set "QT_DIR=%GITHUB_WORKSPACE%\Qt\%QT_VERSION%\msvc2022_64"
           if not exist "%QT_DIR%\bin\qmake.exe" ( echo ::error::qmake.exe missing under %QT_DIR% & dir "%GITHUB_WORKSPACE%\Qt" /s /b & exit /b 1 )
           echo Qt6_DIR=%QT_DIR%>>%GITHUB_ENV%

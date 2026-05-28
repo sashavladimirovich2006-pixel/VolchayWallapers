@@ -178,7 +178,22 @@ cmake --build build --config Release
 - Утверждены 5 тем и янтарно-оранжевый акцент.
 - Создан этот `README.md` с правилами разработки.
 
-(Дальнейшие записи добавляются по мере коммитов.)
+### 2026-05-28 — Каркас, ядро, QML, CI
+- Реализован Logger (per-day ротация, 14-дневное удержание, `qInstallMessageHandler`).
+- Реализован Settings поверх `QSettings` (`INI`, `%APPDATA%/Volchay/VolchayWallpapers/VolchayWallpapers.ini`).
+- Реализован ThemeManager с пятью темами и янтарно-оранжевым акцентом.
+- Реализована WallpaperLibrary как `QAbstractListModel` (роли filePath/name/size/modified/thumbnail).
+- Реализован MpvObject на `QQuickFramebufferObject` + mpv render API; при отсутствии libmpv во время сборки превращается в безопасную заглушку (флаг `VOLCHAY_HAVE_MPV`).
+- Реализован WallpaperEngine: Progman + 0x052C + EnumWindows → WorkerW, `SetParent`, многомониторная геометрия.
+- Реализован SystemTray.
+- QML: `Main.qml` с боковой панелью, четырьмя страницами, плавными анимациями, glow-эффектом, тостами; SVG-only иконки (`home/library/settings/about/play/pause/apply/delete/folder/theme/monitor/logo`).
+- Добавлен `.github/workflows/build-windows.yml`: MSVC + aqtinstall + libmpv SDK + windeployqt + Inno Setup installer + публикация артефактов.
+- Добавлен `installer/volchay.iss` (Inno Setup): задачи «ярлык на рабочем столе» и «автозапуск».
+
+### 2026-05-29 — CI: итерации по установке Qt
+- Несколько прогонов падают на шаге `Install Qt`. Перебрали:
+  Qt 6.7.2 + msvc2019 → нет архивов; Qt 6.8.0 + msvc2022 на windows-latest (новый vs2026) — `aqt install-qt` завершается ошибкой; pin `windows-2022` + Qt 6.9.1 — тоже падает.
+- Аннотации показывают только финальный `aqt install-qt failed`. Полный текст ошибки виден на странице `Actions` репозитория (раздел Install Qt). Следующий шаг — открыть Actions в браузере, скопировать конкретное сообщение (типично: 404 на онлайн-репозитории Qt либо сеть/прокси на runner), затем подобрать рабочую комбинацию: либо более старая стабильная версия (6.6.3), либо `windows-2022` + явный mirror через `--base https://qt-mirror.dannhauer.de/` для aqt.
 
 ---
 
