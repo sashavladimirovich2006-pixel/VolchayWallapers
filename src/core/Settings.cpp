@@ -99,6 +99,8 @@ QString Settings::currentWallpaper() const { return m_s.value("state/currentWall
 void Settings::setCurrentWallpaper(const QString& v) {
     if (v == currentWallpaper()) return;
     m_s.setValue("state/currentWallpaper", v);
+    Logger::instance().log(Logger::Info, "Settings",
+        QStringLiteral("currentWallpaper -> %1").arg(v));
     emit currentWallpaperChanged();
 }
 

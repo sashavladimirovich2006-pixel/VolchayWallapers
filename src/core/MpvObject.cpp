@@ -128,10 +128,10 @@ void MpvObject::initializeMpv() {
         return;
     }
     mpv_set_option_string(m_mpv, "terminal", "no");
-    // Only error-level messages from mpv internals; rest is too chatty for a
-    // wallpaper player and contributed to the 'end-file fires immediately'
-    // confusion before we got proper end-file diagnostics in onMpvWakeup.
-    mpv_set_option_string(m_mpv, "msg-level", "all=error");
+    // Want enough chatter to see what's happening when a file fails to load.
+    // 'v' on player+ao+vo+demux+vd surfaces track selection / decoder pick /
+    // demuxer errors, while leaving the rest of mpv quiet.
+    mpv_set_option_string(m_mpv, "msg-level", "all=warn,player=v,ao=v,vo=v,vd=v,demux=v");
     mpv_set_option_string(m_mpv, "loop-file", "inf");
     mpv_set_option_string(m_mpv, "keep-open", "yes");
     // Software decode. hwdec=auto-safe + WS_EX_LAYERED parent (which we used to
@@ -141,7 +141,12 @@ void MpvObject::initializeMpv() {
     // cheap and bulletproof.
     mpv_set_option_string(m_mpv, "hwdec", "no");
     mpv_set_option_string(m_mpv, "vo", "libmpv");
-    mpv_set_option_string(m_mpv, "audio", "no");
+    // NOT audio=no (== aid=no). That made mpv refuse to play files whenever
+    // the video track failed to auto-select, with the cryptic
+    // "no video or audio streams selected" error — because we'd told it
+    // there's no audio either. Instead keep audio tracks selectable but
+    // muted by default; QML controls mute via the property.
+    mpv_set_option_string(m_mpv, "mute", "yes");
 
     if (mpv_initialize(m_mpv) < 0) {
         Logger::instance().log(Logger::Error, "Mpv", "mpv_initialize failed");
@@ -151,9 +156,12 @@ void MpvObject::initializeMpv() {
         return;
     }
 
-    // Stream error-level log lines from libmpv into our logger and bubble
-    // them up via mpvError() so the QML toast surfaces real failures.
-    mpv_request_log_messages(m_mpv, "error");
+    // Forward warn+ log lines from libmpv into our logger. Anything ERROR
+    // also bubbles up as mpvError() → QML toast (see onMpvWakeup). The
+    // msg-level option above keeps the verbose chatter on player/ao/vo/vd/demux,
+    // so the log file has decoder pick + track selection trail when a file
+    // fails to load.
+    mpv_request_log_messages(m_mpv, "v");
 
     mpv_set_wakeup_callback(m_mpv,
         [](void* data) {
@@ -285,6 +293,18 @@ void MpvObject::stop() {
     emit playingChanged();
 }
 
+#if VOLCHAY_HAVE_MPV
+// Best-effort fetch of a string property; returns empty if mpv has nothing.
+static QString mpvStr(mpv_handle* h, const char* name) {
+    if (!h) return {};
+    char* s = nullptr;
+    if (mpv_get_property(h, name, MPV_FORMAT_STRING, &s) < 0 || !s) return {};
+    const QString out = QString::fromUtf8(s);
+    mpv_free(s);
+    return out;
+}
+#endif
+
 void MpvObject::onMpvWakeup() {
 #if VOLCHAY_HAVE_MPV
     if (!m_mpv) return;
@@ -301,7 +321,55 @@ void MpvObject::onMpvWakeup() {
                 const QString text = QString::fromUtf8(msg->text).trimmed();
                 Logger::instance().log(lvl, QStringLiteral("mpv:%1").arg(msg->prefix), text);
                 if (msg->log_level <= MPV_LOG_LEVEL_ERROR && !text.isEmpty()) {
-                    emit mpvError(QStringLiteral("mpv: %1").arg(text));
+                    // Translate the most common opaque mpv messages into
+                    // something a non-developer can act on.
+                    QString user = QStringLiteral("mpv: %1").arg(text);
+                    if (text.contains("no video or audio streams selected", Qt::CaseInsensitive)) {
+                        user = QStringLiteral("Файл не содержит распознаваемого видеопотока "
+                                              "(или его кодек не поддерживается этой сборкой libmpv).");
+                    } else if (text.contains("Failed to recognize file format", Qt::CaseInsensitive)) {
+                        user = QStringLiteral("Не удалось распознать формат файла.");
+                    } else if (text.contains("Can not open external file", Qt::CaseInsensitive)
+                            || text.contains("Failed to open", Qt::CaseInsensitive)) {
+                        user = QStringLiteral("Не удалось открыть файл (нет доступа или путь неверен).");
+                    }
+                    emit mpvError(user);
+                }
+                break;
+            }
+            case MPV_EVENT_START_FILE: {
+                Logger::instance().log(Logger::Info, "Mpv",
+                    QStringLiteral("start-file: %1").arg(m_source));
+                break;
+            }
+            case MPV_EVENT_FILE_LOADED: {
+                // mpv successfully parsed the container and chose tracks.
+                // Dump everything we need to diagnose stream/codec issues
+                // without needing the user to reproduce.
+                const QString fmt    = mpvStr(m_mpv, "file-format");
+                const QString vcodec = mpvStr(m_mpv, "video-codec");
+                const QString acodec = mpvStr(m_mpv, "audio-codec");
+                const QString vfmt   = mpvStr(m_mpv, "video-format");
+                const QString afmt   = mpvStr(m_mpv, "audio-format");
+                int64_t w = 0, h = 0;
+                mpv_get_property(m_mpv, "width",  MPV_FORMAT_INT64, &w);
+                mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h);
+                Logger::instance().log(Logger::Info, "Mpv",
+                    QStringLiteral("file-loaded: container=%1 video=%2 (%3) %4x%5 audio=%6 (%7)")
+                        .arg(fmt.isEmpty()    ? "?" : fmt,
+                             vcodec.isEmpty() ? "—" : vcodec,
+                             vfmt.isEmpty()   ? "?" : vfmt)
+                        .arg(w).arg(h)
+                        .arg(acodec.isEmpty() ? "—" : acodec,
+                             afmt.isEmpty()   ? "?" : afmt));
+
+                // Full track-list — verbose but exactly what you want to see
+                // when "no streams selected" fires next time. JSON string is
+                // what mpv returns for the property in string form.
+                const QString tracks = mpvStr(m_mpv, "track-list");
+                if (!tracks.isEmpty()) {
+                    Logger::instance().log(Logger::Debug, "Mpv",
+                        QStringLiteral("track-list: %1").arg(tracks));
                 }
                 break;
             }
@@ -318,8 +386,8 @@ void MpvObject::onMpvWakeup() {
                 if (ef->reason == MPV_END_FILE_REASON_ERROR) {
                     const QString err = QString::fromUtf8(mpv_error_string(ef->error));
                     Logger::instance().log(Logger::Error, "Mpv",
-                        QStringLiteral("end-file reason=error code=%1 (%2)")
-                            .arg(ef->error).arg(err));
+                        QStringLiteral("end-file reason=error code=%1 (%2) source=%3")
+                            .arg(ef->error).arg(err, m_source));
                     emit mpvError(QStringLiteral("Видео не открылось: %1").arg(err));
                 } else {
                     Logger::instance().log(Logger::Debug, "Mpv",

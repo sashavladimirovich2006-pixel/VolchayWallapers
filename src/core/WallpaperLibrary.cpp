@@ -83,15 +83,27 @@ void WallpaperLibrary::refresh() {
 }
 
 bool WallpaperLibrary::addFile(const QString& filePath) {
-    if (filePath.isEmpty()) return false;
+    Logger::instance().log(Logger::Info, "Library",
+        QStringLiteral("addFile: %1").arg(filePath));
+    if (filePath.isEmpty()) {
+        Logger::instance().log(Logger::Warn, "Library", "addFile: empty path");
+        return false;
+    }
     if (!QFile::exists(filePath)) {
-        emit errorOccurred(QStringLiteral("Файл не найден: ") + filePath);
+        const QString msg = QStringLiteral("Файл не найден: ") + filePath;
+        Logger::instance().log(Logger::Warn, "Library", msg);
+        emit errorOccurred(msg);
         return false;
     }
     if (!isSupported(filePath)) {
-        emit errorOccurred(QStringLiteral("Неподдерживаемый формат: ") + filePath);
+        const QString msg = QStringLiteral("Неподдерживаемый формат: ") + filePath;
+        Logger::instance().log(Logger::Warn, "Library", msg);
+        emit errorOccurred(msg);
         return false;
     }
+    const qint64 size = QFileInfo(filePath).size();
+    Logger::instance().log(Logger::Info, "Library",
+        QStringLiteral("addFile: accepted, size=%1 bytes").arg(size));
     if (m_settings) {
         m_settings->addLibraryPath(filePath);
     }
