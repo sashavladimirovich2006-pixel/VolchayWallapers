@@ -60,6 +60,10 @@ private:
 #ifdef Q_OS_WIN
     void*                   m_previousParent = nullptr;
     void*                   m_workerW = nullptr;
+    // Saved GWL_STYLE / GWL_EXSTYLE so detach() can restore the host window
+    // exactly to its pre-attach state. qintptr matches LONG_PTR on x64.
+    qintptr                 m_previousStyle = 0;
+    qintptr                 m_previousExStyle = 0;
 #endif
 };
 

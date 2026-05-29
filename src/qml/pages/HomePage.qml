@@ -156,8 +156,6 @@ Item {
                             enabled: page.previewPath.length > 0
                             onClicked: {
                                 Settings.currentWallpaper = page.previewPath
-                                // Toggle off and on to force a fresh attach (new file).
-                                if (Settings.wallpaperEnabled) Settings.wallpaperEnabled = false
                                 Settings.wallpaperEnabled = true
                             }
                         }

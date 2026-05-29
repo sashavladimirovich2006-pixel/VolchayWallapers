@@ -27,6 +27,7 @@ class MpvObject : public QQuickFramebufferObject {
     Q_PROPERTY(int volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(bool mute READ mute WRITE setMute NOTIFY muteChanged)
     Q_PROPERTY(QString scaleMode READ scaleMode WRITE setScaleMode NOTIFY scaleModeChanged)
+    Q_PROPERTY(int fpsLimit READ fpsLimit WRITE setFpsLimit NOTIFY fpsLimitChanged)
 
 public:
     explicit MpvObject(QQuickItem* parent = nullptr);
@@ -48,6 +49,9 @@ public:
     QString scaleMode() const { return m_scaleMode; }
     void setScaleMode(const QString& v);
 
+    int fpsLimit() const { return m_fpsLimit; }
+    void setFpsLimit(int v);
+
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
     Q_INVOKABLE void stop();
@@ -64,6 +68,7 @@ signals:
     void volumeChanged();
     void muteChanged();
     void scaleModeChanged();
+    void fpsLimitChanged();
     void mpvError(const QString& message);
 
 private slots:
@@ -80,6 +85,7 @@ private:
     int     m_volume  = 0;
     bool    m_mute    = true;
     QString m_scaleMode = "fill";
+    int     m_fpsLimit = 60;
 
 #if VOLCHAY_HAVE_MPV
     mpv_handle*         m_mpv       = nullptr;

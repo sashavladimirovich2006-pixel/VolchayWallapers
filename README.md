@@ -255,8 +255,34 @@ cmake --build build --config Release
 - Шаг падает, если: нет `libmpv-2.dll` под `MPV_ROOT`, `dumpbin` отдал ненулевой код, в выходе `dumpbin` нет таблицы экспортов, `lib.exe` упал, `mpv.lib` не появился. То есть в портабль снова не попадёт stub-сборка.
 - Затронутые файлы: `.github/workflows/build-windows.yml`.
 
+### 2026-05-29 — Видео не показывалось: hwdec, layered, FPS, fullscreen-pause, battery-mute
+- Симптом после фикса WorkerW: окно хоста корректно прицеплено к слою обоев, но в логе сразу после `loadfile` шёл `Mpv end-file (reason=2 error=…)` и кадры не появлялись. Причина — комбинация двух факторов.
+  - `hwdec=auto-safe` на окне с `WS_EX_LAYERED` (через `SetLayeredWindowAttributes`) не инициализирует аппаратный декодер на Windows 11 24H2: DXVA2/D3D11VA отказываются работать с layered surface, mpv корректно завершает воспроизведение с `end-file`.
+  - Уровень логов mpv был `all=v`, поэтому полезные ошибки тонули в потоке verbose-сообщений и не уходили в наш Logger как ERROR.
+- Правка `src/core/MpvObject.cpp`:
+  - `hwdec=no` (раньше `auto-safe`). Программный декодер устойчиво работает на всех конфигурациях Windows; для живых обоев это разумный компромисс — нагрузка на CPU небольшая, зато гарантированно играет.
+  - `msg-level=all=error`, в `onMpvWakeup` подписываемся на `mpv_request_log_messages(..., "error")` и поднимаем их в наш Logger.
+  - `MPV_EVENT_END_FILE` теперь разбирается: `reason` + `error` декодируются в человекочитаемую строку и испускаются сигналом `mpvError(QString)`. В QML это ловится `onMpvError` и показывается в тосте — больше «молча не играет» не будет.
+- Правка `src/core/WallpaperEngine.cpp` / `.h`: убран `WS_EX_LAYERED` + `SetLayeredWindowAttributes` при `attach()`. Layered-окна нужны были для альфа-композиции с обоями Windows, но именно они конфликтовали с DXVA. Теперь:
+  - в `attach()` сохраняем оригинальные `GWL_STYLE` / `GWL_EXSTYLE` в `m_previousStyle` / `m_previousExStyle` (поля внутри `#ifdef Q_OS_WIN`);
+  - в `detach()` восстанавливаем стили точь-в-точь — окно уходит обратно в обычное состояние без следов нашего вмешательства.
+- Новое свойство `MpvObject::fpsLimit` (`Q_PROPERTY(int)`). Сеттер вызывает `set_property("display-fps-override", fps)` + `set_property("video-sync", "display-resample")`. По умолчанию 60. В `Main.qml` биндится к `Settings.fpsLimit`, так что ползунок в настройках теперь реально режет FPS — это снимает нагрузку с GPU на ноутбуках.
+- Новый класс `PowerWatcher` (`src/core/PowerWatcher.{h,cpp}`):
+  - `Q_PROPERTY(bool fullscreenActive)` — Win32 `SHQueryUserNotificationState`. Состояния `QUNS_BUSY`, `QUNS_RUNNING_D3D_FULL_SCREEN`, `QUNS_PRESENTATION_MODE` считаются «полным экраном».
+  - `Q_PROPERTY(bool onBattery)` — Win32 `GetSystemPowerStatus`. `ACLineStatus == 0` → батарея, `255` (unknown) — оставляем предыдущее значение, чтобы не дёргать подписчиков на ноутбуках без датчика.
+  - Опрос раз в секунду через `QTimer`, сигналы испускаются только на смене состояния (edge), чтобы не создавать шума в QML-биндингах.
+  - Под не-Windows платформами класс компилируется в no-op — обоев на Linux/macOS пока нет, но код проекта остаётся переносимым.
+- `src/main.cpp`: создаётся `PowerWatcher power;` рядом с остальными core-синглтонами и экспонируется в QML как контекстное свойство `Power`.
+- `src/qml/Main.qml`:
+  - биндинг `mute: Settings.muteOnBattery && Settings.volume === 0` был косметической ошибкой (mute, когда громкость и так нулевая — это no-op). Заменён на честный `mute: Settings.muteOnBattery && Power.onBattery`. Теперь опция «mute от батареи» делает то, что обещает.
+  - `Connections { target: Power; onFullscreenActiveChanged }` — при включённом `Settings.pauseOnFullscreen` вызывает `wallpaperMpv.pause()` / `.play()` по edge-сигналу. Дополнительный `Connections` на `Settings.pauseOnFullscreenChanged` синхронизирует состояние, если опцию переключили во время уже идущей полноэкранной сессии.
+  - На `Component.onCompleted` хост-окна, если `pauseOnFullscreen` уже стоит и сейчас активна полноэкранная сессия — сразу ставим на паузу, не ждём следующего опроса.
+- `HomePage.qml` / `LibraryPage.qml`: убран паттерн off→on (`wallpaperEnabled = false; ... = true`) на «Применить». Сеттер `MpvObject::source` сам делает `loadfile … replace` — пересоздавать хост-окно не нужно, оно только моргает.
+- `CMakeLists.txt`: добавлены `PowerWatcher.{h,cpp}` в `VOLCHAY_SOURCES`; в `target_link_libraries` для Windows добавлен `shell32` (требуется `SHQueryUserNotificationState`).
+- Затронутые файлы: `src/core/MpvObject.{h,cpp}`, `src/core/WallpaperEngine.{h,cpp}`, `src/core/PowerWatcher.{h,cpp}` (новые), `src/main.cpp`, `src/qml/Main.qml`, `src/qml/pages/HomePage.qml`, `src/qml/pages/LibraryPage.qml`, `CMakeLists.txt`.
+
 ### Предложение по улучшению
-Реализовать паузу обоев при полноэкранных приложениях (`Settings.pauseOnFullscreen` уже есть в UI, но не подключена к движку). На Windows достаточно периодически опрашивать `SHQueryUserNotificationState` из `shellapi.h` (или ловить `QUNS_RUNNING_D3D_FULL_SCREEN` / `QUNS_PRESENTATION_MODE`) с интервалом 1–2 с. Когда состояние «полный экран» — звать `MpvObject::pause()`, иначе `play()`. Это снимет нагрузку на GPU во время игр и видео и закроет реально востребованный сценарий, под который в настройках уже стоит переключатель.
+Сделать «живое» превью карточки в библиотеке: при наведении курсора на `WallpaperCard` запускать миниатюрный `MpvObject` (160×90, без звука, `loop-file=inf`, `hwdec=no`, `fps=24`) поверх статичной иконки `play.svg`. Сейчас все карточки выглядят одинаково — пользователь не понимает, какое именно видео внутри, пока не нажмёт «Применить» и не подождёт перерисовки рабочего стола. Прогрев плеера при hover-in и `stop()` при hover-out даст мгновенную обратную связь без серьёзных накладных расходов: один параллельный mpv-инстанс активен в любой момент, FPS 24, без декодера — это копейки. Ускорит выбор обоев и сделает библиотеку похожей на «живой» каталог, а не на сетку плейсхолдеров.
 
 ---
 

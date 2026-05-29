@@ -15,6 +15,7 @@
 #include "core/WallpaperEngine.h"
 #include "core/SystemTray.h"
 #include "core/MpvObject.h"
+#include "core/PowerWatcher.h"
 
 using namespace volchay;
 
@@ -54,6 +55,7 @@ int main(int argc, char* argv[]) {
     WallpaperLibrary library(&settings);
     WallpaperEngine  engine(&settings);
     SystemTray       tray;
+    PowerWatcher     power;
 
     // ----- QML -----
     qmlRegisterType<MpvObject>("Volchay.Mpv", 1, 0, "MpvObject");
@@ -63,6 +65,7 @@ int main(int argc, char* argv[]) {
     qml.rootContext()->setContextProperty("Theme",     &theme);
     qml.rootContext()->setContextProperty("Library",   &library);
     qml.rootContext()->setContextProperty("Engine",    &engine);
+    qml.rootContext()->setContextProperty("Power",     &power);
 
     QObject::connect(&qml, &QQmlApplicationEngine::objectCreationFailed,
                      &app, []() {

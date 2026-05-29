@@ -165,19 +165,51 @@ ApplicationWindow {
                 color: "black"
                 title: "VolchayWallpaperHost"
 
+                // Полноэкранное окно поверх → пауза, если включено в настройках.
+                property bool fullscreenPaused: Settings.pauseOnFullscreen && Power.fullscreenActive
+
                 MpvObject {
                     id: wallpaperMpv
                     anchors.fill: parent
                     source: Settings.currentWallpaper
                     volume: Settings.volume
-                    mute: Settings.muteOnBattery && Settings.volume === 0
+                    // Mute на батарее (если опция включена) — реальное поведение,
+                    // а не косметическая «mute, когда громкость и так 0».
+                    mute: Settings.muteOnBattery && Power.onBattery
                     scaleMode: Settings.scaleMode
+                    fpsLimit: Settings.fpsLimit
+                    onMpvError: function(message) { toast.show(message, true) }
+                }
+
+                // Реакция на полноэкранные приложения. Используем edge-сигнал
+                // от PowerWatcher, чтобы лишний раз не дёргать mpv.
+                Connections {
+                    target: Power
+                    function onFullscreenActiveChanged(active) {
+                        if (!Settings.pauseOnFullscreen) return
+                        if (active) wallpaperMpv.pause()
+                        else        wallpaperMpv.play()
+                    }
+                }
+                // Если пользователь включил pauseOnFullscreen уже во время
+                // полноэкранной сессии — синхронизируем состояние сразу.
+                Connections {
+                    target: Settings
+                    function onPauseOnFullscreenChanged() {
+                        if (Settings.pauseOnFullscreen && Power.fullscreenActive)
+                            wallpaperMpv.pause()
+                        else if (!Settings.pauseOnFullscreen)
+                            wallpaperMpv.play()
+                    }
                 }
 
                 Component.onCompleted: {
                     if (!Engine.attach(hostWindow)) {
                         Settings.wallpaperEnabled = false
+                        return
                     }
+                    if (Settings.pauseOnFullscreen && Power.fullscreenActive)
+                        wallpaperMpv.pause()
                 }
                 Component.onDestruction: Engine.detach()
             }

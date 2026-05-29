@@ -128,10 +128,18 @@ void MpvObject::initializeMpv() {
         return;
     }
     mpv_set_option_string(m_mpv, "terminal", "no");
-    mpv_set_option_string(m_mpv, "msg-level", "all=v");
+    // Only error-level messages from mpv internals; rest is too chatty for a
+    // wallpaper player and contributed to the 'end-file fires immediately'
+    // confusion before we got proper end-file diagnostics in onMpvWakeup.
+    mpv_set_option_string(m_mpv, "msg-level", "all=error");
     mpv_set_option_string(m_mpv, "loop-file", "inf");
     mpv_set_option_string(m_mpv, "keep-open", "yes");
-    mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
+    // Software decode. hwdec=auto-safe + WS_EX_LAYERED parent (which we used to
+    // set in WallpaperEngine::attach) failed to initialize on Windows 11 24H2:
+    // mpv emitted MPV_END_FILE_REASON_ERROR right after loadfile and never
+    // produced a frame. Wallpapers loop short clips — software decode is
+    // cheap and bulletproof.
+    mpv_set_option_string(m_mpv, "hwdec", "no");
     mpv_set_option_string(m_mpv, "vo", "libmpv");
     mpv_set_option_string(m_mpv, "audio", "no");
 
@@ -142,6 +150,10 @@ void MpvObject::initializeMpv() {
         emit mpvError("mpv_initialize failed");
         return;
     }
+
+    // Stream error-level log lines from libmpv into our logger and bubble
+    // them up via mpvError() so the QML toast surfaces real failures.
+    mpv_request_log_messages(m_mpv, "error");
 
     mpv_set_wakeup_callback(m_mpv,
         [](void* data) {
@@ -243,6 +255,18 @@ void MpvObject::setScaleMode(const QString& v) {
     emit scaleModeChanged();
 }
 
+void MpvObject::setFpsLimit(int v) {
+    v = qBound(1, v, 240);
+    if (v == m_fpsLimit) return;
+    m_fpsLimit = v;
+    // Cap rendering to v fps. display-fps-override pretends the monitor runs
+    // at v Hz; combined with video-sync=display-resample mpv won't render
+    // more frames than that. Works whether the actual display is 60/120/144 Hz.
+    setOption("display-fps-override", QString::number(v));
+    setOption("video-sync", "display-resample");
+    emit fpsLimitChanged();
+}
+
 void MpvObject::play() {
     command({ "set", "pause", "no" });
     m_playing = true;
@@ -274,12 +298,33 @@ void MpvObject::onMpvWakeup() {
                 if (msg->log_level <= MPV_LOG_LEVEL_ERROR) lvl = Logger::Error;
                 else if (msg->log_level <= MPV_LOG_LEVEL_WARN) lvl = Logger::Warn;
                 else if (msg->log_level <= MPV_LOG_LEVEL_INFO) lvl = Logger::Info;
-                Logger::instance().log(lvl, QStringLiteral("mpv:%1").arg(msg->prefix),
-                                       QString::fromUtf8(msg->text).trimmed());
+                const QString text = QString::fromUtf8(msg->text).trimmed();
+                Logger::instance().log(lvl, QStringLiteral("mpv:%1").arg(msg->prefix), text);
+                if (msg->log_level <= MPV_LOG_LEVEL_ERROR && !text.isEmpty()) {
+                    emit mpvError(QStringLiteral("mpv: %1").arg(text));
+                }
                 break;
             }
             case MPV_EVENT_END_FILE: {
-                Logger::instance().log(Logger::Debug, "Mpv", "end-file");
+                auto* ef = static_cast<mpv_event_end_file*>(ev->data);
+                const char* reason = "unknown";
+                switch (ef->reason) {
+                    case MPV_END_FILE_REASON_EOF:      reason = "eof";      break;
+                    case MPV_END_FILE_REASON_STOP:     reason = "stop";     break;
+                    case MPV_END_FILE_REASON_QUIT:     reason = "quit";     break;
+                    case MPV_END_FILE_REASON_ERROR:    reason = "error";    break;
+                    case MPV_END_FILE_REASON_REDIRECT: reason = "redirect"; break;
+                }
+                if (ef->reason == MPV_END_FILE_REASON_ERROR) {
+                    const QString err = QString::fromUtf8(mpv_error_string(ef->error));
+                    Logger::instance().log(Logger::Error, "Mpv",
+                        QStringLiteral("end-file reason=error code=%1 (%2)")
+                            .arg(ef->error).arg(err));
+                    emit mpvError(QStringLiteral("Видео не открылось: %1").arg(err));
+                } else {
+                    Logger::instance().log(Logger::Debug, "Mpv",
+                        QStringLiteral("end-file reason=%1").arg(reason));
+                }
                 break;
             }
             case MPV_EVENT_SHUTDOWN: {

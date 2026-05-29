@@ -135,15 +135,18 @@ bool WallpaperEngine::attach(QQuickWindow* window) {
     }
     m_workerW = parent;
 
-    // Remember previous parent so detach() can restore it
-    m_previousParent = GetParent(hwnd);
+    // Remember previous parent and styles so detach() can restore them.
+    m_previousParent  = GetParent(hwnd);
+    m_previousStyle   = GetWindowLongPtrW(hwnd, GWL_STYLE);
+    m_previousExStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
 
     SetWindowLongPtrW(hwnd, GWL_STYLE,
-        (GetWindowLongPtrW(hwnd, GWL_STYLE) & ~(WS_OVERLAPPEDWINDOW)) | WS_CHILD | WS_VISIBLE);
+        (m_previousStyle & ~(WS_OVERLAPPEDWINDOW)) | WS_CHILD | WS_VISIBLE);
+    // WS_EX_LAYERED breaks libmpv's hwdec init on Windows 11 24H2 — and we
+    // don't need per-pixel alpha for opaque video. Keep NOACTIVATE+TOOLWINDOW
+    // so the host window stays out of Alt-Tab and never steals focus.
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE,
-        GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-        | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED);
-    SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+        (m_previousExStyle & ~WS_EX_LAYERED) | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
 
     if (!SetParent(hwnd, parent)) {
         Logger::instance().log(Logger::Error, "Engine",
@@ -167,12 +170,14 @@ void WallpaperEngine::detach() {
     HWND hwnd = reinterpret_cast<HWND>(m_window->winId());
     if (hwnd) {
         SetParent(hwnd, static_cast<HWND>(m_previousParent));
-        SetWindowLongPtrW(hwnd, GWL_STYLE,
-            (GetWindowLongPtrW(hwnd, GWL_STYLE) & ~WS_CHILD) | WS_OVERLAPPEDWINDOW);
+        SetWindowLongPtrW(hwnd, GWL_STYLE,   m_previousStyle);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, m_previousExStyle);
     }
     m_window.clear();
     m_workerW = nullptr;
-    m_previousParent = nullptr;
+    m_previousParent  = nullptr;
+    m_previousStyle   = 0;
+    m_previousExStyle = 0;
     if (m_active) {
         m_active = false;
         emit activeChanged();

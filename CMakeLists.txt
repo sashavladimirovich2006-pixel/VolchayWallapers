@@ -80,6 +80,8 @@ set(VOLCHAY_SOURCES
     src/core/SystemTray.cpp
     src/core/MpvObject.h
     src/core/MpvObject.cpp
+    src/core/PowerWatcher.h
+    src/core/PowerWatcher.cpp
 )
 
 qt_add_executable(VolchayWallpapers WIN32 ${VOLCHAY_SOURCES})
@@ -135,7 +137,8 @@ target_link_libraries(VolchayWallpapers PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(VolchayWallpapers PRIVATE user32 dwmapi gdi32)
+    # shell32 — SHQueryUserNotificationState в PowerWatcher.
+    target_link_libraries(VolchayWallpapers PRIVATE user32 dwmapi gdi32 shell32)
 endif()
 
 if(VOLCHAY_HAVE_MPV)
