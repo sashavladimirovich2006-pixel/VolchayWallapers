@@ -64,6 +64,11 @@ public:
     }
 
     void render() override {
+        if (!m_loggedFirstRender) {
+            Logger::instance().log(Logger::Info, "Mpv",
+                "First render() called — scene graph is alive");
+            m_loggedFirstRender = true;
+        }
         ensureContext();
         auto* ctx = m_obj->renderCtx();
         if (!ctx) return;
@@ -91,6 +96,7 @@ public:
 
 private:
     MpvObject* m_obj;
+    bool       m_loggedFirstRender = false;
 };
 
 #else
@@ -115,6 +121,19 @@ MpvObject::MpvObject(QQuickItem* parent)
     setMirrorVertically(true);
     setTextureFollowsItemSize(true);
     initializeMpv();
+
+    // Kick the scene graph until the render context exists. Once we've gone
+    // through ensureContext() the timer self-stops in onRenderReady().
+    m_renderKickTimer.setInterval(100);
+    connect(&m_renderKickTimer, &QTimer::timeout, this, [this]() {
+        if (m_renderReady) { m_renderKickTimer.stop(); return; }
+        // Asking the item to redraw will cause Qt Quick to schedule a paint
+        // pass for the host window, which in turn calls MpvRenderer::render
+        // → ensureContext → mpv_render_context_create.
+        update();
+        if (auto* w = window()) w->update();
+    });
+    m_renderKickTimer.start();
 }
 
 MpvObject::~MpvObject() {
@@ -250,6 +269,7 @@ void MpvObject::setSource(const QString& src) {
 void MpvObject::onRenderReady() {
     if (m_renderReady) return; // idempotent: only first context create matters
     m_renderReady = true;
+    m_renderKickTimer.stop();
     Logger::instance().log(Logger::Info, "Mpv", "Render context ready");
     if (!m_pendingSource.isEmpty()) {
         const QString src = m_pendingSource;

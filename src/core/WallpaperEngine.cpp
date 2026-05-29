@@ -155,7 +155,17 @@ bool WallpaperEngine::attach(QQuickWindow* window) {
         return false;
     }
 
+    // After SetParent, the QQuickWindow loses its normal expose flow. Tell
+    // Qt to keep the scene graph + GL context alive even if the platform
+    // briefly thinks the window is unexposed, and force a repaint so the
+    // MpvObject FBO actually renders and mpv_render_context_create can run.
+    m_window->setPersistentSceneGraph(true);
+    m_window->setPersistentGraphics(true);
+
     resyncGeometry();
+
+    m_window->requestUpdate();
+
     m_active = true;
     emit activeChanged();
     Logger::instance().log(Logger::Info, "Engine", "Wallpaper attached to WorkerW");
@@ -187,14 +197,23 @@ void WallpaperEngine::detach() {
 
 void WallpaperEngine::resyncGeometry() {
     if (!m_window) return;
-    HWND hwnd = reinterpret_cast<HWND>(m_window->winId());
     const QRect r = computeTargetGeometry();
-    if (r.isValid() && hwnd) {
+    if (!r.isValid()) return;
+
+    // Tell Qt about the geometry so contentItem (and anchored MpvObject)
+    // size correctly — otherwise the FBO is zero-size and never renders.
+    m_window->setGeometry(r);
+
+    // ...and force the same on the native HWND. After SetParent to WorkerW
+    // the QPlatformWindow may not push setGeometry through to the HWND.
+    HWND hwnd = reinterpret_cast<HWND>(m_window->winId());
+    if (hwnd) {
         MoveWindow(hwnd, r.x(), r.y(), r.width(), r.height(), TRUE);
-        Logger::instance().log(Logger::Debug, "Engine",
-            QStringLiteral("geometry %1x%2 @ (%3,%4)")
-                .arg(r.width()).arg(r.height()).arg(r.x()).arg(r.y()));
     }
+
+    Logger::instance().log(Logger::Info, "Engine",
+        QStringLiteral("geometry %1x%2 @ (%3,%4)")
+            .arg(r.width()).arg(r.height()).arg(r.x()).arg(r.y()));
 }
 
 #else

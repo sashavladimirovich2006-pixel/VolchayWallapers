@@ -3,6 +3,7 @@
 #include <QQuickFramebufferObject>
 #include <QString>
 #include <QSize>
+#include <QTimer>
 #include <atomic>
 
 #if VOLCHAY_HAVE_MPV
@@ -98,6 +99,13 @@ private:
     // We hold the pending source here and replay it from onRenderReady.
     bool    m_renderReady   = false;
     QString m_pendingSource;
+
+    // Bootstrap pump: if the scene graph never paints (which happens when our
+    // host window is reparented to WorkerW before its first expose), the
+    // renderer is never asked to create the render context. We periodically
+    // call update() on ourselves until render-ready, then stop. Cheap when it
+    // works (couple of updates), self-terminating either way.
+    QTimer  m_renderKickTimer;
 
 #if VOLCHAY_HAVE_MPV
     mpv_handle*         m_mpv       = nullptr;
