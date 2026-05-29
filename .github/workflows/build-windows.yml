@@ -167,19 +167,41 @@ jobs:
           Copy-Item $dll.FullName $stage
           Write-Host "mpv DLL: $($dll.FullName)"
 
-          # windeployqt — pull Qt runtime + QML imports + plugins.
-          # --qmldir <abs>: absolute path side-steps a Qt 6.9.1 qmlimportscanner
-          # crash (STATUS_STACK_BUFFER_OVERRUN / 0xC0000409) that triggers on
-          # some relative-path inputs; --verbose 2 prints which QML file the
-          # scanner is on when it crashes, so we have something to chase.
+          # windeployqt enumerates EVERY plugin DLL in the Qt install and
+          # parses its PE headers — independent of what our binary actually
+          # links. On Qt 6.9.1 it crashes with STATUS_STACK_BUFFER_OVERRUN
+          # (0xC0000409) midway through plugins/sqldrivers/ (last successful
+          # read in CI was qsqlodbc.dll). We don't ship a SQL-using app, so
+          # the cheapest robust fix is to delete the plugin directories we
+          # demonstrably don't need BEFORE windeployqt sees them. Each
+          # removal also trims the portable build a bit.
+          $unused = @(
+              "sqldrivers",         # Qt6Sql — we don't link it
+              "networkinformation", # we don't make network calls
+              "printsupport",       # no printing
+              "designer",           # dev-time only
+              "qmlls", "qmllint",   # QML language server / linter
+              "help",               # Qt Assistant
+              "generic"             # extra input devices (TUIO etc.)
+          )
+          foreach ($p in $unused) {
+              $dir = Join-Path "$env:Qt6_DIR\plugins" $p
+              if (Test-Path $dir) {
+                  Write-Host "Pruning unused plugin dir: $dir"
+                  Remove-Item -Recurse -Force $dir
+              }
+          }
+
+          # --qmldir <abs>: absolute path side-steps a separate Qt 6.9.1
+          # qmlimportscanner crash on some relative-path inputs.
           $qmlDir = (Resolve-Path "src\qml").Path
           Write-Host "windeployqt --qmldir = $qmlDir"
           & "$env:Qt6_DIR\bin\windeployqt.exe" `
               --release `
-              --verbose 2 `
               --qmldir "$qmlDir" `
               --no-translations `
               --no-system-d3d-compiler `
+              --no-virtualkeyboard `
               "$stage\VolchayWallpapers.exe"
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with exit code $LASTEXITCODE" }
 
