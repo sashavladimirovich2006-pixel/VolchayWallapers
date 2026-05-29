@@ -55,6 +55,12 @@ public:
                 auto* self = static_cast<MpvObject*>(data);
                 QMetaObject::invokeMethod(self, "update", Qt::QueuedConnection);
             }, m_obj);
+
+        // Tell the MpvObject (on its own thread) that the render context is
+        // up. Until this fires, setSource only stores the path; the actual
+        // loadfile happens here. Without this, vo=libmpv has no context to
+        // bind to when loadfile arrives and mpv refuses to play video.
+        QMetaObject::invokeMethod(m_obj, "onRenderReady", Qt::QueuedConnection);
     }
 
     void render() override {
@@ -223,13 +229,37 @@ void MpvObject::setSource(const QString& src) {
     m_source = src;
     emit sourceChanged();
     if (src.isEmpty()) {
+        m_pendingSource.clear();
         stop();
+        return;
+    }
+    if (!m_renderReady) {
+        // vo=libmpv would fail right now — render context isn't up yet.
+        // Replay this load from onRenderReady().
+        m_pendingSource = src;
+        Logger::instance().log(Logger::Info, "Mpv",
+            QStringLiteral("setSource: render not ready, deferring loadfile: %1").arg(src));
         return;
     }
     Logger::instance().log(Logger::Info, "Mpv", "loadfile: " + src);
     command({ "loadfile", src, "replace" });
     m_playing = true;
     emit playingChanged();
+}
+
+void MpvObject::onRenderReady() {
+    if (m_renderReady) return; // idempotent: only first context create matters
+    m_renderReady = true;
+    Logger::instance().log(Logger::Info, "Mpv", "Render context ready");
+    if (!m_pendingSource.isEmpty()) {
+        const QString src = m_pendingSource;
+        m_pendingSource.clear();
+        Logger::instance().log(Logger::Info, "Mpv",
+            QStringLiteral("Replaying deferred loadfile: %1").arg(src));
+        command({ "loadfile", src, "replace" });
+        m_playing = true;
+        emit playingChanged();
+    }
 }
 
 void MpvObject::setVolume(int v) {

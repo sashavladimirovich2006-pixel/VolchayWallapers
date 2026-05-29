@@ -56,6 +56,10 @@ public:
     Q_INVOKABLE void pause();
     Q_INVOKABLE void stop();
 
+    // Called by MpvRenderer once mpv_render_context_create succeeds.
+    // Posted via Qt::QueuedConnection, so runs on the GUI thread.
+    Q_INVOKABLE void onRenderReady();
+
 #if VOLCHAY_HAVE_MPV
     mpv_handle*         mpv()        const { return m_mpv; }
     mpv_render_context* renderCtx()  const { return m_renderCtx; }
@@ -86,6 +90,14 @@ private:
     bool    m_mute    = true;
     QString m_scaleMode = "fill";
     int     m_fpsLimit = 60;
+
+    // vo=libmpv won't initialise until mpv_render_context_create runs in the
+    // renderer thread. If QML binds `source` before the first paint, the
+    // loadfile lands while vo is still un-init and mpv emits
+    // "Error opening/initializing the selected video_out (--vo) device".
+    // We hold the pending source here and replay it from onRenderReady.
+    bool    m_renderReady   = false;
+    QString m_pendingSource;
 
 #if VOLCHAY_HAVE_MPV
     mpv_handle*         m_mpv       = nullptr;

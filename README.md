@@ -307,6 +307,19 @@ cmake --build build --config Release
 - **Лог в `Settings::setCurrentWallpaper`:** Info `currentWallpaper -> <path>`. До этого момента смена обоев в логе не отражалась.
 - **Затронутые файлы:** `src/core/MpvObject.cpp`, `src/core/WallpaperLibrary.cpp`, `src/core/Settings.cpp`. README — этот журнал.
 
+### 2026-05-30 — Багфикс: «Error opening/initializing the selected video_out (--vo) device»
+- **Симптом:** после правки `audio=no → mute=yes` файл стал открываться (даже звук пошёл), но видеоряд не появлялся, в тосте — `mpv: Error opening/initializing the selected video_out (--vo) device.` И в логе тот же текст с уровня mpv:vo.
+- **Причина:** `vo=libmpv` — это специальный video output, который рендерит в OpenGL FBO через **render API**. Он требует, чтобы `mpv_render_context_create` был вызван **до** того, как mpv попытается инициализировать vo при первом `loadfile`. У нас render-контекст создаётся лениво в `MpvRenderer::ensureContext`, а та вызывается только на первый `render()` — то есть когда Qt Quick впервые рисует сцену. Биндинг `source: Settings.currentWallpaper` в QML, наоборот, стреляет немедленно при создании `Window` хоста — раньше первого фрейма. mpv получает `loadfile`, аудио-цепочка поднимается успешно (звук пошёл), видео-цепочка просит vo подняться, у vo нет render-контекста, vo возвращает ошибку. После этого render-контекст наконец создаётся (по первому `render()`), но mpv уже отказал текущему файлу и больше не пытается.
+- **Правка `src/core/MpvObject.{h,cpp}`:**
+  - Поля `bool m_renderReady = false;` и `QString m_pendingSource;` в `MpvObject`.
+  - `Q_INVOKABLE void onRenderReady()` — слот для уведомления из render-треда. Идемпотентен (повторные вызовы игнорируются).
+  - `setSource`: если `m_renderReady == false`, путь сохраняется в `m_pendingSource` и `loadfile` НЕ отправляется в mpv. Сигнал `sourceChanged` всё равно эмитится — QML-биндинги (`mute`, `volume`, `fpsLimit`) продолжают работать.
+  - В `MpvRenderer::ensureContext` после успешного `mpv_render_context_create` (и установки update-callback) — `QMetaObject::invokeMethod(m_obj, "onRenderReady", Qt::QueuedConnection)`. Очередь доставляет вызов на GUI-тред, где живёт `MpvObject`.
+  - `onRenderReady`: ставит `m_renderReady = true`, и если в `m_pendingSource` что-то есть — отправляет `loadfile` сейчас. К этому моменту render-контекст уже живой, vo=libmpv инициализируется без ошибки, видео начинает играть.
+- **Почему именно слот, а не таймер/задержка:** таймером пришлось бы гадать, через сколько мс контекст готов; на быстрой машине это лишняя задержка, на медленной — недостаточная. Слот срабатывает ровно в момент готовности и ровно один раз.
+- **Дополнительные логи** (в самом нужном месте, где всё ломалось без объяснения): `setSource: render not ready, deferring loadfile: <path>`, `Render context ready`, `Replaying deferred loadfile: <path>`. По журналу видно: путь дошёл → отложен → контекст поднялся → файл перезапущен.
+- **Затронутые файлы:** `src/core/MpvObject.h`, `src/core/MpvObject.cpp`.
+
 ### Предложение по улучшению
 Кешировать **первый кадр** каждого видео библиотеки как PNG-миниатюру (`%LOCALAPPDATA%/Volchay/VolchayWallpapers/thumbs/<sha1(filePath)>.png`) и показывать её до запуска live-превью. Сейчас при наведении на карточку видна статичная иконка `play.svg` 200–500 мс, пока mpv инициализируется; с кешированной миниатюрой пользователь сразу увидит «о чём видео». Реализация: одноразовый проход по библиотеке через `mpv --frames=1 --vo=image-jpeg --o=...` (или через тот же `QQuickFramebufferObject` с `seek 25%` → `screenshot-raw`), сохранение в каталог thumbs, добавление роли `thumbnail` в `WallpaperLibrary` (она уже задумывалась — см. структуру в README, но не реализована). `WallpaperCard` показывает миниатюру как фон thumb, а live-превью поверх — плавный переход от статики к движению.
 
