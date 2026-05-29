@@ -201,7 +201,6 @@ jobs:
               --qmldir "$qmlDir" `
               --no-translations `
               --no-system-d3d-compiler `
-              --no-virtualkeyboard `
               "$stage\VolchayWallpapers.exe"
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with exit code $LASTEXITCODE" }
 
