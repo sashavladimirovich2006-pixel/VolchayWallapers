@@ -168,12 +168,16 @@ jobs:
           Write-Host "mpv DLL: $($dll.FullName)"
 
           # windeployqt — pull Qt runtime + QML imports + plugins.
-          # --qmldir src/qml: scan QML imports (QtQuick.Effects, our Volchay.Mpv stuff, etc.)
-          # We KEEP plugins (no --no-plugins) and OpenGL SW fallback (drop --no-opengl-sw)
-          # so the app launches on machines without a real GPU driver match.
+          # --qmldir <abs>: absolute path side-steps a Qt 6.9.1 qmlimportscanner
+          # crash (STATUS_STACK_BUFFER_OVERRUN / 0xC0000409) that triggers on
+          # some relative-path inputs; --verbose 2 prints which QML file the
+          # scanner is on when it crashes, so we have something to chase.
+          $qmlDir = (Resolve-Path "src\qml").Path
+          Write-Host "windeployqt --qmldir = $qmlDir"
           & "$env:Qt6_DIR\bin\windeployqt.exe" `
               --release `
-              --qmldir "src\qml" `
+              --verbose 2 `
+              --qmldir "$qmlDir" `
               --no-translations `
               --no-system-d3d-compiler `
               "$stage\VolchayWallpapers.exe"

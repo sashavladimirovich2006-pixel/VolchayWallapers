@@ -165,9 +165,6 @@ ApplicationWindow {
                 color: "black"
                 title: "VolchayWallpaperHost"
 
-                // Полноэкранное окно поверх → пауза, если включено в настройках.
-                property bool fullscreenPaused: Settings.pauseOnFullscreen && Power.fullscreenActive
-
                 MpvObject {
                     id: wallpaperMpv
                     anchors.fill: parent
