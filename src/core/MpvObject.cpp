@@ -7,6 +7,7 @@
 #include <QQuickWindow>
 #include <QStringList>
 #include <QThread>
+#include <QFile>
 
 #if VOLCHAY_HAVE_MPV
   #include <mpv/client.h>
@@ -252,6 +253,17 @@ void MpvObject::setSource(const QString& src) {
         stop();
         return;
     }
+    
+    // Check if file exists before trying to load
+    if (!QFile::exists(src)) {
+        Logger::instance().log(Logger::Error, "Mpv",
+            QStringLiteral("File does not exist: %1").arg(src));
+        emit mpvError(QStringLiteral("Файл не найден: %1").arg(src));
+        m_source.clear();
+        emit sourceChanged();
+        return;
+    }
+    
     if (!m_renderReady) {
         // vo=libmpv would fail right now — render context isn't up yet.
         // Replay this load from onRenderReady().

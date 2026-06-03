@@ -106,6 +106,12 @@ ApplicationWindow {
     Connections {
         target: Engine
         function onEngineError(message) { toast.show(message, true) }
+        function onAttached() {
+            // After wallpaper window is attached to WorkerW, raise the
+            // main window so it stays accessible above the wallpaper layer.
+            root.raise()
+            root.requestActivate()
+        }
     }
 
     Rectangle {
@@ -161,7 +167,7 @@ ApplicationWindow {
             Window {
                 id: hostWindow
                 visible: true
-                flags: Qt.FramelessWindowHint | Qt.Tool
+                flags: Qt.FramelessWindowHint
                 color: "black"
                 title: "VolchayWallpaperHost"
 
@@ -170,16 +176,37 @@ ApplicationWindow {
                     anchors.fill: parent
                     source: Settings.currentWallpaper
                     volume: Settings.volume
-                    // Mute на батарее (если опция включена) — реальное поведение,
-                    // а не косметическая «mute, когда громкость и так 0».
                     mute: Settings.muteOnBattery && Power.onBattery
                     scaleMode: Settings.scaleMode
                     fpsLimit: Settings.fpsLimit
-                    onMpvError: function(message) { toast.show(message, true) }
+
+                    onPlayingChanged: {
+                        if (playing) {
+                            safetyTimer.stop()
+                            // Switch render pump from bootstrap (QExposeEvent)
+                            // to steady mode to avoid GL deadlock
+                            Engine.notifyFirstRender()
+                        }
+                    }
+
+                    onMpvError: function(message) {
+                        toast.show(message, true)
+                        Settings.wallpaperEnabled = false
+                    }
                 }
 
-                // Реакция на полноэкранные приложения. Используем edge-сигнал
-                // от PowerWatcher, чтобы лишний раз не дёргать mpv.
+                // Safety: если mpv завис и не начал играть за 30 сек — отключаем
+                Timer {
+                    id: safetyTimer
+                    interval: 30000
+                    running: true
+                    onTriggered: {
+                        if (!wallpaperMpv.playing) {
+                            Settings.wallpaperEnabled = false
+                        }
+                    }
+                }
+
                 Connections {
                     target: Power
                     function onFullscreenActiveChanged(active) {
@@ -188,8 +215,6 @@ ApplicationWindow {
                         else        wallpaperMpv.play()
                     }
                 }
-                // Если пользователь включил pauseOnFullscreen уже во время
-                // полноэкранной сессии — синхронизируем состояние сразу.
                 Connections {
                     target: Settings
                     function onPauseOnFullscreenChanged() {

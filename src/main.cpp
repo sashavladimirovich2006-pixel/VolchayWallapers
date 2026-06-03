@@ -7,6 +7,8 @@
 #include <QDir>
 #include <QSurfaceFormat>
 #include <QIcon>
+#include <QSGRendererInterface>
+#include <QFile>
 
 #include "core/Logger.h"
 #include "core/Settings.h"
@@ -16,6 +18,10 @@
 #include "core/SystemTray.h"
 #include "core/MpvObject.h"
 #include "core/PowerWatcher.h"
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 using namespace volchay;
 
@@ -29,6 +35,12 @@ int main(int argc, char* argv[]) {
     fmt.setDepthBufferSize(24);
     fmt.setStencilBufferSize(8);
     QSurfaceFormat::setDefaultFormat(fmt);
+
+    // Force OpenGL RHI backend instead of D3D11/D3D12. D3D swap chains
+    // cannot be created for child windows of WorkerW (DXGI factory
+    // becomes invalid after SetParent). OpenGL (WGL) works fine for
+    // child windows.
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
 
     QApplication::setApplicationName("VolchayWallpapers");
     QApplication::setOrganizationName("Volchay");
@@ -56,6 +68,25 @@ int main(int argc, char* argv[]) {
     WallpaperEngine  engine(&settings);
     SystemTray       tray;
     PowerWatcher     power;
+
+#ifdef Q_OS_WIN
+    // Apply saved process priority early — before any wallpaper rendering
+    // starts. HIGH_PRIORITY_CLASS ensures our render thread gets CPU time
+    // even under load (games, fullscreen apps), like Wallpaper Engine.
+    if (settings.highPriority()) {
+        SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+        Logger::instance().log(Logger::Info, "App", "Process priority -> HIGH (saved)");
+    }
+    
+    // Verify saved wallpaper file exists at startup
+    QString savedWallpaper = settings.currentWallpaper();
+    if (!savedWallpaper.isEmpty() && !QFile::exists(savedWallpaper)) {
+        Logger::instance().log(Logger::Warn, "App",
+            QStringLiteral("Saved wallpaper file not found: %1 — clearing").arg(savedWallpaper));
+        settings.setCurrentWallpaper(QString());
+        settings.setWallpaperEnabled(false);
+    }
+#endif
 
     // ----- QML -----
     qmlRegisterType<MpvObject>("Volchay.Mpv", 1, 0, "MpvObject");

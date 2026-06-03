@@ -194,6 +194,24 @@ Item {
                             verticalAlignment: Text.AlignVCenter
                         }
                     }
+                    Switch {
+                        text: qsTr("Высокий приоритет процесса")
+                        checked: Settings.highPriority
+                        onToggled: Settings.highPriority = checked
+                        contentItem: Text {
+                            text: parent.text
+                            color: Theme.text
+                            leftPadding: parent.indicator.width + 12
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                    Text {
+                        text: qsTr("Повышает приоритет рендеринга обоев, чтобы они не замирали при нагрузке (игры, тяжёлые приложения).")
+                        color: Theme.textMuted
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
                     Text {
                         text: qsTr("Лог-файлы сохраняются рядом с настройками программы и автоматически очищаются через 14 дней.")
                         color: Theme.textMuted

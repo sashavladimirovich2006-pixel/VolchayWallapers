@@ -18,10 +18,13 @@ Item {
         ]
         onAccepted: {
             const url = selectedFile.toString()
-            // strip file:/// prefix on Windows
+            // strip file:/// prefix on Windows and decode percent-encoding
+            // (spaces → %20, Cyrillic → %D0%XX etc.). Without decoding,
+            // QFile::exists and mpv loadfile both fail on non-ASCII paths.
             let path = url
             if (path.startsWith("file:///")) path = path.substring(8)
             else if (path.startsWith("file://")) path = path.substring(7)
+            path = decodeURIComponent(path)
             page.previewPath = path
             if (Library.addFile(path)) {
                 // ok

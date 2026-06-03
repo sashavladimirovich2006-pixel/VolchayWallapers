@@ -83,8 +83,24 @@ set(VOLCHAY_SOURCES
     src/core/PowerWatcher.h
     src/core/PowerWatcher.cpp
 )
+if(WIN32)
+    # Disable MSVC auto-generated manifest (which has asInvoker level).
+    # We'll embed our own manifest (requireAdministrator + DPI awareness)
+    # via mt.exe post-build step.
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /MANIFEST:NO")
+endif()
 
 qt_add_executable(VolchayWallpapers WIN32 ${VOLCHAY_SOURCES})
+
+if(WIN32)
+    # Embed our UAC manifest using mt.exe after linking.
+    add_custom_command(TARGET VolchayWallpapers POST_BUILD
+        COMMAND mt.exe -nologo
+            -manifest "${CMAKE_CURRENT_SOURCE_DIR}/src/VolchayWallpapers.manifest"
+            -outputresource:"$<TARGET_FILE:VolchayWallpapers>"\;1
+        COMMENT "Embedding UAC manifest (requireAdministrator)"
+    )
+endif()
 
 qt_add_resources(VolchayWallpapers "qml_resources"
     PREFIX "/"
@@ -138,7 +154,8 @@ target_link_libraries(VolchayWallpapers PRIVATE
 
 if(WIN32)
     # shell32 — SHQueryUserNotificationState в PowerWatcher.
-    target_link_libraries(VolchayWallpapers PRIVATE user32 dwmapi gdi32 shell32)
+    # comctl32 — SetWindowSubclass/RemoveWindowSubclass в WallpaperEngine.
+    target_link_libraries(VolchayWallpapers PRIVATE user32 dwmapi gdi32 shell32 comctl32)
 endif()
 
 if(VOLCHAY_HAVE_MPV)

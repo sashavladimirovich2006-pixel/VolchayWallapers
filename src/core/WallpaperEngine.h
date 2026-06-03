@@ -3,6 +3,8 @@
 #include <QObject>
 #include <QRect>
 #include <QPointer>
+#include <QTimer>
+#include <QWindow>
 
 class QQuickWindow;
 
@@ -43,10 +45,16 @@ public:
     /// Изменить геометрию окна (например, при смене монитора).
     Q_INVOKABLE void resyncGeometry();
 
+    /// Called from QML when the first frame is rendered — switches the
+    /// render pump from bootstrap mode (QExposeEvent) to steady mode
+    /// (requestUpdate only) to avoid GL deadlocks.
+    Q_INVOKABLE void notifyFirstRender();
+
 signals:
     void activeChanged();
     void monitorsChanged();
     void engineError(const QString& message);
+    void attached();  // emitted after successful attach, so UI can raise itself
 
 private:
     QRect computeTargetGeometry() const;
@@ -57,6 +65,15 @@ private:
     Settings*               m_settings = nullptr;
     QPointer<QQuickWindow>  m_window;
     bool                    m_active = false;
+
+    // After SetParent to WorkerW, the QQuickWindow no longer receives
+    // QExposeEvent from the platform plugin (child windows don't go through
+    // the top-level expose flow). Without expose events, the render loop
+    // may stall and MpvObject frames stop appearing. This timer pumps
+    // QQuickWindow::update() at ~30 Hz to keep the scene graph alive.
+    QTimer                  m_renderPumpTimer;
+    bool                    m_renderPumpFirstRender = false;
+
 #ifdef Q_OS_WIN
     void*                   m_previousParent = nullptr;
     void*                   m_workerW = nullptr;

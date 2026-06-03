@@ -7,6 +7,7 @@
 
 #ifdef Q_OS_WIN
 #  include <QSettings>
+#  include <windows.h>
 #endif
 
 namespace volchay {
@@ -93,6 +94,25 @@ void Settings::setAutoStart(bool v) {
     }
 #endif
     emit autoStartChanged();
+}
+
+bool Settings::highPriority() const { return m_s.value("system/highPriority", false).toBool(); }
+void Settings::setHighPriority(bool v) {
+    if (v == highPriority()) return;
+    m_s.setValue("system/highPriority", v);
+#ifdef Q_OS_WIN
+    // HIGH_PRIORITY_CLASS ensures our wallpaper rendering thread gets
+    // CPU time even under load (games, fullscreen apps). Like Wallpaper Engine.
+    HANDLE hProcess = GetCurrentProcess();
+    if (v) {
+        SetPriorityClass(hProcess, HIGH_PRIORITY_CLASS);
+        Logger::instance().log(Logger::Info, "Settings", "Process priority -> HIGH");
+    } else {
+        SetPriorityClass(hProcess, NORMAL_PRIORITY_CLASS);
+        Logger::instance().log(Logger::Info, "Settings", "Process priority -> NORMAL");
+    }
+#endif
+    emit highPriorityChanged();
 }
 
 QString Settings::currentWallpaper() const { return m_s.value("state/currentWallpaper").toString(); }

@@ -16,6 +16,7 @@ class Settings : public QObject {
     Q_PROPERTY(QString scaleMode READ scaleMode WRITE setScaleMode NOTIFY scaleModeChanged)
     Q_PROPERTY(int targetMonitor READ targetMonitor WRITE setTargetMonitor NOTIFY targetMonitorChanged)
     Q_PROPERTY(bool autoStart READ autoStart WRITE setAutoStart NOTIFY autoStartChanged)
+    Q_PROPERTY(bool highPriority READ highPriority WRITE setHighPriority NOTIFY highPriorityChanged)
     Q_PROPERTY(QString currentWallpaper READ currentWallpaper WRITE setCurrentWallpaper NOTIFY currentWallpaperChanged)
     Q_PROPERTY(bool wallpaperEnabled READ wallpaperEnabled WRITE setWallpaperEnabled NOTIFY wallpaperEnabledChanged)
 
@@ -46,6 +47,9 @@ public:
     bool autoStart() const;
     void setAutoStart(bool v);
 
+    bool highPriority() const;
+    void setHighPriority(bool v);
+
     QString currentWallpaper() const;
     void setCurrentWallpaper(const QString& v);
 
@@ -65,6 +69,7 @@ signals:
     void scaleModeChanged();
     void targetMonitorChanged();
     void autoStartChanged();
+    void highPriorityChanged();
     void currentWallpaperChanged();
     void wallpaperEnabledChanged();
     void libraryChanged();

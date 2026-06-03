@@ -5,9 +5,32 @@
 #include <QQuickWindow>
 #include <QGuiApplication>
 #include <QScreen>
+#include <QExposeEvent>
 
 #ifdef Q_OS_WIN
   #include <windows.h>
+  #include <commctrl.h>
+  #pragma comment(lib, "comctl32.lib")
+
+  // Subclass procedure that blocks WM_DESTROY and WM_NCDESTROY.
+  // When we SetParent a QQuickWindow to WorkerW, Windows/Explorer sends
+  // WM_DESTROY (e.g. on desktop refresh, theme change, or display change),
+  // which tears down the Qt window and kills the render context.
+  // We swallow these messages so Qt stays alive.
+  static LRESULT CALLBACK WallpaperSubclassProc(
+      HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
+      UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+  {
+      Q_UNUSED(uIdSubclass); Q_UNUSED(dwRefData); Q_UNUSED(hwnd);
+      switch (msg) {
+      case WM_DESTROY:
+      case WM_NCDESTROY:
+          // Block destruction — the QQuickWindow must survive as long as
+          // we keep it attached to WorkerW.
+          return 0;
+      }
+      return DefSubclassProc(hwnd, msg, wp, lp);
+  }
 #endif
 
 namespace volchay {
@@ -24,6 +47,26 @@ WallpaperEngine::WallpaperEngine(Settings* settings, QObject* parent)
         connect(gui, &QGuiApplication::screenAdded,   this, &WallpaperEngine::monitorsChanged);
         connect(gui, &QGuiApplication::screenRemoved, this, &WallpaperEngine::monitorsChanged);
     }
+
+    // Render pump: after SetParent to WorkerW the QQuickWindow stops
+    // receiving expose events from the platform plugin, so the render
+    // loop can stall. We pump QExposeEvent + update() at ~30 Hz until
+    // the first render() occurs, then STOP the pump entirely — mpv's
+    // own update callback handles frame delivery from that point.
+    m_renderPumpTimer.setInterval(33);  // ~30 Hz
+    m_renderPumpFirstRender = false;
+    connect(&m_renderPumpTimer, &QTimer::timeout, this, [this]() {
+        if (!m_window) return;
+        if (m_renderPumpFirstRender) {
+            // Render is alive — stop the pump, mpv handles frames.
+            m_renderPumpTimer.stop();
+            return;
+        }
+        // Bootstrap phase: force expose + update to get first render.
+        QCoreApplication::postEvent(m_window,
+            new QExposeEvent(m_window->geometry()));
+        m_window->requestUpdate();
+    });
 }
 
 WallpaperEngine::~WallpaperEngine() {
@@ -41,6 +84,12 @@ QStringList WallpaperEngine::monitors() const {
                   .arg(i + 1).arg(g.width()).arg(g.height()).arg(name);
     }
     return out;
+}
+
+void WallpaperEngine::notifyFirstRender() {
+    m_renderPumpFirstRender = true;
+    Logger::instance().log(Logger::Info, "Engine",
+        "Render pump switched to steady mode (no QExposeEvent)");
 }
 
 QRect WallpaperEngine::computeTargetGeometry() const {
@@ -61,9 +110,35 @@ QRect WallpaperEngine::computeTargetGeometry() const {
 
 struct EnumCtx {
     HWND result = nullptr;
+    HWND defViewParent = nullptr;
     int  totalWorkerW = 0;
     int  withDefView  = 0;
 };
+
+// Recursive child search — FindWindowEx only checks direct children,
+// but on Windows 11 24H2 SHELLDLL_DefView may be nested deeper inside
+// a WorkerW. We walk the entire child tree.
+struct DefViewSearch {
+    HWND found = nullptr;
+};
+static BOOL CALLBACK findDefViewProc(HWND hwnd, LPARAM lp) {
+    auto* s = reinterpret_cast<DefViewSearch*>(lp);
+    wchar_t cls[64] = {0};
+    GetClassNameW(hwnd, cls, 64);
+    if (lstrcmpW(cls, L"SHELLDLL_DefView") == 0) {
+        s->found = hwnd;
+        return FALSE; // stop
+    }
+    // Recurse into children
+    EnumChildWindows(hwnd, findDefViewProc, lp);
+    return s->found ? FALSE : TRUE;
+}
+
+static bool workerWHasDefView(HWND workerW) {
+    DefViewSearch s;
+    EnumChildWindows(workerW, findDefViewProc, reinterpret_cast<LPARAM>(&s));
+    return s.found != nullptr;
+}
 
 static BOOL CALLBACK enumProc(HWND top, LPARAM lp) {
     auto* ctx = reinterpret_cast<EnumCtx*>(lp);
@@ -73,15 +148,12 @@ static BOOL CALLBACK enumProc(HWND top, LPARAM lp) {
     if (lstrcmpW(cls, L"WorkerW") != 0) return TRUE;
 
     ctx->totalWorkerW++;
-    HWND defView = FindWindowExW(top, nullptr, L"SHELLDLL_DefView", nullptr);
-    if (defView) {
-        // This is the "icons" WorkerW — it hosts SHELLDLL_DefView/SysListView32.
-        // We do NOT want this one as our parent.
+    if (workerWHasDefView(top)) {
         ctx->withDefView++;
-        return TRUE;
+        ctx->defViewParent = top;
+        return TRUE; // skip this one — it hosts icons
     }
     // A top-level WorkerW WITHOUT SHELLDLL_DefView is the wallpaper layer.
-    // Take the last such window encountered (closest to desktop in Z-order).
     ctx->result = top;
     return TRUE;
 }
@@ -104,10 +176,20 @@ void* WallpaperEngine::findWorkerW() {
     EnumWindows(&enumProc, reinterpret_cast<LPARAM>(&ctx));
 
     Logger::instance().log(Logger::Info, "Engine",
-        QStringLiteral("WorkerW scan: total=%1 with-defview=%2 picked=0x%3")
+        QStringLiteral("WorkerW scan: total=%1 with-defview=%2 picked=0x%3 defview-parent=0x%4")
             .arg(ctx.totalWorkerW)
             .arg(ctx.withDefView)
-            .arg(reinterpret_cast<quintptr>(ctx.result), 0, 16));
+            .arg(reinterpret_cast<quintptr>(ctx.result), 0, 16)
+            .arg(reinterpret_cast<quintptr>(ctx.defViewParent), 0, 16));
+
+    // Fallback: if no wallpaper-layer WorkerW found but we found the
+    // icons WorkerW, use the icon WorkerW's NEXT sibling as parent.
+    if (!ctx.result && ctx.defViewParent) {
+        ctx.result = GetWindow(ctx.defViewParent, GW_HWNDNEXT);
+        Logger::instance().log(Logger::Info, "Engine",
+            QStringLiteral("Fallback: using next sibling of DefView parent: 0x%1")
+                .arg(reinterpret_cast<quintptr>(ctx.result), 0, 16));
+    }
 
     if (!ctx.result) {
         // Refuse rather than fall back to Progman — parenting to Progman
@@ -140,14 +222,27 @@ bool WallpaperEngine::attach(QQuickWindow* window) {
     m_previousStyle   = GetWindowLongPtrW(hwnd, GWL_STYLE);
     m_previousExStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
 
-    SetWindowLongPtrW(hwnd, GWL_STYLE,
-        (m_previousStyle & ~(WS_OVERLAPPEDWINDOW)) | WS_CHILD | WS_VISIBLE);
-    // WS_EX_LAYERED breaks libmpv's hwdec init on Windows 11 24H2 — and we
-    // don't need per-pixel alpha for opaque video. Keep NOACTIVATE+TOOLWINDOW
-    // so the host window stays out of Alt-Tab and never steals focus.
-    SetWindowLongPtrW(hwnd, GWL_EXSTYLE,
-        (m_previousExStyle & ~WS_EX_LAYERED) | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
+    // Step 1: hide the window BEFORE any style changes.
+    ShowWindow(hwnd, SW_HIDE);
 
+    // Step 2: install subclass to block WM_DESTROY/WM_NCDESTROY.
+    // Windows/Explorer sends these when we SetParent to WorkerW or on
+    // desktop refresh. Without blocking them, the QQuickWindow is
+    // destroyed and render context is lost.
+    if (!SetWindowSubclass(hwnd, WallpaperSubclassProc, 1, 0)) {
+        Logger::instance().log(Logger::Error, "Engine",
+            QStringLiteral("SetWindowSubclass failed: %1").arg(GetLastError()));
+    }
+
+    // Step 3: change styles to WS_CHILD while hidden.
+    SetWindowLongPtrW(hwnd, GWL_STYLE,
+        (m_previousStyle & ~(WS_OVERLAPPEDWINDOW | WS_POPUP))
+            | WS_CHILD | WS_CLIPCHILDREN);
+    SetWindowLongPtrW(hwnd, GWL_EXSTYLE,
+        (m_previousExStyle & ~(WS_EX_LAYERED | WS_EX_OVERLAPPEDWINDOW))
+            | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
+
+    // Step 4: reparent to WorkerW while hidden.
     if (!SetParent(hwnd, parent)) {
         Logger::instance().log(Logger::Error, "Engine",
             QStringLiteral("SetParent failed: %1").arg(GetLastError()));
@@ -155,33 +250,67 @@ bool WallpaperEngine::attach(QQuickWindow* window) {
         return false;
     }
 
+    // Step 5: apply style changes and show the window.
+    // HWND_BOTTOM places our wallpaper window BELOW all other children
+    // of WorkerW (including the icons/SysListView32). This ensures:
+    //   - Desktop icons are visible on top of wallpaper
+    //   - Our wallpaper never covers the main application window
+    SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0,
+        SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE
+            | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+
     // After SetParent, the QQuickWindow loses its normal expose flow. Tell
     // Qt to keep the scene graph + GL context alive even if the platform
-    // briefly thinks the window is unexposed, and force a repaint so the
-    // MpvObject FBO actually renders and mpv_render_context_create can run.
+    // briefly thinks the window is unexposed.
     m_window->setPersistentSceneGraph(true);
     m_window->setPersistentGraphics(true);
 
+    // Step 6: manually send QExposeEvent to trick Qt Quick into thinking
+    // the window is exposed. Without this, scene graph won't render because
+    // Qt Quick checks isExposed() before rendering.
+    QExposeEvent exposeEvent(m_window->geometry());
+    QCoreApplication::sendEvent(m_window, &exposeEvent);
+
     resyncGeometry();
+
+    // After sizing, push our window to the BOTTOM of the Z-order within
+    // the WorkerW parent. This ensures desktop icons and other windows
+    // appear on top of our wallpaper.
+    SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 
     m_window->requestUpdate();
 
+    // Pump the render loop — child windows of WorkerW don't get expose
+    // events from the platform plugin, so the scene graph can stall.
+    m_renderPumpTimer.start();
+
     m_active = true;
     emit activeChanged();
+    emit attached();
     Logger::instance().log(Logger::Info, "Engine", "Wallpaper attached to WorkerW");
     return true;
 }
 
 void WallpaperEngine::detach() {
+    m_renderPumpTimer.stop();
     if (!m_window) {
         m_active = false;
         return;
     }
     HWND hwnd = reinterpret_cast<HWND>(m_window->winId());
     if (hwnd) {
-        SetParent(hwnd, static_cast<HWND>(m_previousParent));
+        // Remove subclass first, before any other operations.
+        RemoveWindowSubclass(hwnd, WallpaperSubclassProc, 1);
+
+        // Restore original styles first (before re-parenting back to
+        // top-level), so the window transitions cleanly.
         SetWindowLongPtrW(hwnd, GWL_STYLE,   m_previousStyle);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, m_previousExStyle);
+        SetParent(hwnd, static_cast<HWND>(m_previousParent));
+        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+            SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE
+                | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
     }
     m_window.clear();
     m_workerW = nullptr;
